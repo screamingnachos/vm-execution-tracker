@@ -20,21 +20,34 @@ export default function Home() {
   async function fetchPendingTasks() {
     setLoading(true);
     
-    // Fetch pending photos
-    const { data: photosData } = await supabase
-      .from('photos')
-      .select(`id, image_url, slack_messages ( raw_text, created_at )`)
-      .eq('status', 'pending');
+    try {
+      // Fetch photos
+      const { data: photosData, error: photosError } = await supabase
+        .from('photos')
+        .select(`id, image_url, slack_messages ( raw_text, created_at )`)
+        .eq('status', 'pending');
 
-    // Fetch all real stores from your DB
-    const { data: storesData } = await supabase
-      .from('stores')
-      .select('*');
+      if (photosError) {
+        alert(`Supabase Error: ${photosError.message}`);
+      }
 
-    if (photosData) setTasks(photosData);
-    if (storesData) setDbStores(storesData);
-    
-    setLoading(false);
+      // Fetch stores
+      const { data: storesData, error: storesError } = await supabase
+        .from('stores')
+        .select('*');
+
+      if (storesError) {
+        alert(`Supabase Error: ${storesError.message}`);
+      }
+
+      if (photosData) setTasks(photosData);
+      if (storesData) setDbStores(storesData);
+      
+    } catch (err: any) {
+      alert(`Crash: ${err.message}`);
+    } finally {
+      setLoading(false); // Guarantees the loading screen goes away
+    }
   }
 
   return (
@@ -62,11 +75,21 @@ export default function Home() {
             <button 
               onClick={async () => {
                 setLoading(true);
-                const res = await fetch('/api/sync', { method: 'POST' });
-                const data = await res.json();
-                if (data.count > 0) alert(`Imported ${data.count} old messages!`);
-                else if (data.count === 0) alert('No new messages found.');
-                else alert('Error syncing messages.');
+                try {
+                  const res = await fetch('/api/sync', { method: 'POST' });
+                  const text = await res.text(); // Grabs exact server response
+                  
+                  try {
+                    const data = JSON.parse(text);
+                    if (data.error) alert(`Sync Error: ${data.error}`);
+                    else if (data.count > 0) alert(`Imported ${data.count} old messages!`);
+                    else alert('No new messages found.');
+                  } catch (e) {
+                    alert(`API Crash: ${text.substring(0, 100)}`);
+                  }
+                } catch (error: any) {
+                  alert(`Network Error: ${error.message}`);
+                }
                 fetchPendingTasks();
               }}
               disabled={loading}
