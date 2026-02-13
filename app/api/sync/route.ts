@@ -1,65 +1,63 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { supabase } from '../../../lib/supabase';
 
 export async function POST() {
-  // 1. Get the latest timestamp from your DB
-  const { data: lastMsg } = await supabase
-    .from('slack_messages')
-    .select('slack_ts')
-    .order('slack_ts', { ascending: false })
-    .limit(1)
-    .single();
+  try {
+    const channelId = process.env.SLACK_CHANNEL_ID;
+    if (!channelId) return NextResponse.json({ error: 'Missing SLACK_CHANNEL_ID' }, { status: 400 });
 
-  const oldestTs = lastMsg ? lastMsg.slack_ts : '0';
-  const channelId = process.env.SLACK_CHANNEL_ID!; // Add this to your .env
+    // February 1, 2026 Timestamp
+    const oldestTs = (new Date('2026-02-01T00:00:00').getTime() / 1000).toString();
 
-  // 2. Fetch new messages from Slack
-  const slackRes = await fetch(
-    `https://slack.com/api/conversations.history?channel=${channelId}&oldest=${oldestTs}`,
-    {
-      headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-    }
-  );
+    const slackRes = await fetch(
+      `https://slack.com/api/conversations.history?channel=${channelId}&oldest=${oldestTs}&limit=100`,
+      { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } }
+    );
+    const slackData = await slackRes.json();
 
-  const slackData = await slackRes.json();
-  if (!slackData.messages)
-    return NextResponse.json({ success: true, count: 0 });
+    if (!slackData.ok) return NextResponse.json({ error: slackData.error });
+    if (!slackData.messages) return NextResponse.json({ count: 0 });
 
-  let addedCount = 0;
+    let addedCount = 0;
 
-  // 3. Process new messages with files
-  for (const msg of slackData.messages) {
-    if (msg.files) {
-      // Insert message to DB
-      const { data: newMsg } = await supabase
-        .from('slack_messages')
-        .insert([{ slack_ts: msg.ts, raw_text: msg.text }])
-        .select('id')
-        .single();
+    for (const msg of slackData.messages) {
+      if (msg.files && !msg.bot_id) {
+        // Prevent duplicates
+        const { data: existing } = await supabase.from('slack_messages').select('id').eq('slack_ts', msg.ts).single();
+        if (existing) continue;
 
-      // Process and upload images (using the same logic from the webhook step)
-      for (const file of msg.files) {
-        if (!file.mimetype?.startsWith('image/')) continue;
+        // Insert message
+        const { data: msgData, error: msgError } = await supabase
+          .from('slack_messages')
+          .insert([{ slack_ts: msg.ts, raw_text: msg.text || 'No text attached' }])
+          .select('id').single();
 
-        // ... (Download from Slack and Upload to Supabase Storage logic goes here) ...
+        if (msgError) continue;
 
-        // Insert into photos table
-        await supabase.from('photos').insert([
-          {
-            message_id: newMsg!.id,
-            image_url: 'YOUR_NEW_PUBLIC_URL', // Replace with uploaded URL
-            status: 'pending',
-          },
-        ]);
+        // Process images
+        for (const file of msg.files) {
+          if (!file.mimetype?.startsWith('image/')) continue;
+
+          const fileRes = await fetch(file.url_private_download, {
+            headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+          });
+          const arrayBuffer = await fileRes.arrayBuffer();
+          const fileName = `${msg.ts}-${file.name}`;
+
+          await supabase.storage.from('execution-images').upload(fileName, arrayBuffer, { contentType: file.mimetype, upsert: true });
+          const { data: publicUrlData } = supabase.storage.from('execution-images').getPublicUrl(fileName);
+
+          await supabase.from('photos').insert([{
+            message_id: msgData.id,
+            image_url: publicUrlData.publicUrl,
+            status: 'pending'
+          }]);
+        }
+        addedCount++;
       }
-      addedCount++;
     }
+    return NextResponse.json({ success: true, count: addedCount });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
-  return NextResponse.json({ success: true, count: addedCount });
 }
