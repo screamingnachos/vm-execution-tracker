@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../lib/supabase';
 
-export async function POST() {
+export async function GET() {
   try {
     const channelId = process.env.SLACK_CHANNEL_ID;
     const oldestTs = (new Date('2026-02-01T00:00:00').getTime() / 1000).toString();
