@@ -6,7 +6,6 @@ import { supabase } from '../lib/supabase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-// --- TYPES ---
 interface Store {
   id: string;
   name: string;
@@ -19,11 +18,10 @@ interface Photo {
   created_at: string;
   status: 'approved' | 'rejected';
   image_url: string;
-  rejection_reason?: string; // NEW: Added rejection reason to the type
+  rejection_reason?: string;
   stores?: { name: string };
 }
 
-// --- CONSTANTS & PAYOUT RULES ---
 const EARNINGS_MAP: Record<string, number> = {
   'Reckitt': 750,
   'Veeba': 250,
@@ -70,21 +68,17 @@ export default function Dashboard() {
   async function fetchData() {
     setLoading(true);
     try {
-      const { data: storesData, error: storesError } = await supabase.from('stores').select('*').limit(5000);
-      if (storesError) throw storesError;
+      const { data: storesData } = await supabase.from('stores').select('*').limit(5000);
       if (storesData) setAllStores(storesData);
 
-      // NEW: Added rejection_reason to the database select query
-      const { data: photosData, error: photosError } = await supabase
+      const { data: photosData } = await supabase
         .from('photos')
         .select(`id, brand, created_at, status, image_url, rejection_reason, stores ( name )`)
         .in('status', ['approved', 'rejected'])
         .not('brand', 'is', null)
         .order('created_at', { ascending: false });
 
-      if (photosError) throw photosError;
       if (photosData) setPhotos(photosData as unknown as Photo[]);
-      
     } catch (err: any) {
       console.error("Dashboard Error:", err.message);
     } finally {
@@ -98,7 +92,7 @@ export default function Dashboard() {
     setIsModalOpen(true);
   };
 
-  // --- PDF GENERATOR ENGINE ---
+  // --- PDF EXPORT ENGINE ---
   const exportToPDF = () => {
     setIsExporting(true);
     try {
@@ -107,20 +101,17 @@ export default function Dashboard() {
 
       brandTabs.forEach((brand, index) => {
         if (index > 0) doc.addPage();
+        doc.setFontSize(16); doc.setTextColor(15, 23, 42); doc.text(`Execution Payout: ${brand}`, 14, 22);
+        doc.setFontSize(10); doc.setTextColor(100, 116, 139); doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, 14, 28);
 
-        doc.setFontSize(16);
-        doc.setTextColor(15, 23, 42);
-        doc.text(`Execution Payout Report: ${brand}`, 14, 22);
+        const eligibleStores = allStores.filter(s => s.eligible_brands?.includes(brand)).sort((a, b) => a.name.localeCompare(b.name));
         
-        doc.setFontSize(10);
-        doc.setTextColor(100, 116, 139);
-        doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, 14, 28);
+        // Match string contents (solves multi-select comma joining)
+        const brandPhotos = photos.filter(p => {
+          if (brand === 'Ariel (End Cap) + Tide (Floor Stack)') return p.brand?.includes('Ariel') || p.brand?.includes('Tide');
+          return p.brand?.includes(brand);
+        });
 
-        const eligibleStores = allStores
-          .filter(s => s.eligible_brands?.includes(brand))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-        const brandPhotos = photos.filter(p => p.brand === brand);
         const maxEarning = (EARNINGS_MAP[brand] || 0) * 4;
         const isAriel = brand === 'Ariel (End Cap) + Tide (Floor Stack)';
 
@@ -137,16 +128,23 @@ export default function Dashboard() {
             if (wPhotos.length === 0) {
               rowData.push('-'); 
             } else {
-              const approvedCount = wPhotos.filter(p => p.status === 'approved').length;
               if (isAriel) {
-                if (approvedCount >= 2) {
+                const hasAriel = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
+                const hasTide = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Tide'));
+                
+                if (hasAriel && hasTide) {
                   totalEarned += EARNINGS_MAP[brand];
-                  rowData.push('Approved (2+)');
+                  rowData.push('Approved (Both)');
+                } else if (hasAriel) {
+                  rowData.push('Missed (No Tide)');
+                } else if (hasTide) {
+                  rowData.push('Missed (No Ariel)');
                 } else {
-                  rowData.push(approvedCount === 1 ? 'Missed (Only 1)' : 'Rejected');
+                  rowData.push('Rejected');
                 }
               } else {
-                if (approvedCount >= 1) {
+                const hasApproved = wPhotos.some(p => p.status === 'approved');
+                if (hasApproved) {
                   totalEarned += EARNINGS_MAP[brand];
                   rowData.push('Approved');
                 } else {
@@ -155,7 +153,6 @@ export default function Dashboard() {
               }
             }
           });
-
           rowData.push(`Rs. ${totalEarned} / ${maxEarning}`);
           return rowData;
         });
@@ -170,22 +167,23 @@ export default function Dashboard() {
           alternateRowStyles: { fillColor: [248, 250, 252] }
         });
       });
-
       doc.save(`Franchise_Payouts_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       alert("Error generating PDF.");
-      console.error(err);
     } finally {
       setIsExporting(false);
     }
   };
 
+  // --- BRAND GRID ENGINE ---
   const renderBrandTable = () => {
-    const eligibleStores = allStores
-      .filter(s => s.eligible_brands?.includes(activeTab))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const eligibleStores = allStores.filter(s => s.eligible_brands?.includes(activeTab)).sort((a, b) => a.name.localeCompare(b.name));
 
-    const brandPhotos = photos.filter(p => p.brand === activeTab);
+    const brandPhotos = photos.filter(p => {
+      if (activeTab === 'Ariel (End Cap) + Tide (Floor Stack)') return p.brand?.includes('Ariel') || p.brand?.includes('Tide');
+      return p.brand?.includes(activeTab);
+    });
+
     const maxEarning = (EARNINGS_MAP[activeTab] || 0) * 4;
     const isAriel = activeTab === 'Ariel (End Cap) + Tide (Floor Stack)';
 
@@ -204,11 +202,7 @@ export default function Dashboard() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {eligibleStores.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-400 italic">
-                  No stores are configured for {activeTab} in your database.
-                </td>
-              </tr>
+              <tr><td colSpan={6} className="p-8 text-center text-slate-400 italic">No stores configured for {activeTab}.</td></tr>
             ) : (
               eligibleStores.map((store) => {
                 const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name);
@@ -218,11 +212,13 @@ export default function Dashboard() {
                 let totalEarned = 0;
 
                 [1, 2, 3, 4].forEach(w => {
-                  const approvedCount = weeks[w].filter(p => p.status === 'approved').length;
+                  if (weeks[w].length === 0) return;
                   if (isAriel) {
-                    if (approvedCount >= 2) totalEarned += EARNINGS_MAP[activeTab];
+                    const hasAriel = weeks[w].some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
+                    const hasTide = weeks[w].some(p => p.status === 'approved' && p.brand?.includes('Tide'));
+                    if (hasAriel && hasTide) totalEarned += EARNINGS_MAP[activeTab];
                   } else {
-                    if (approvedCount >= 1) totalEarned += EARNINGS_MAP[activeTab];
+                    if (weeks[w].some(p => p.status === 'approved')) totalEarned += EARNINGS_MAP[activeTab];
                   }
                 });
 
@@ -231,29 +227,27 @@ export default function Dashboard() {
                     <td className="p-4 font-semibold text-slate-800">{store.name}</td>
                     {[1, 2, 3, 4].map(w => {
                       const wPhotos = weeks[w];
-                      if (wPhotos.length === 0) {
-                        return (
-                          <td key={w} className="p-4 text-center">
-                            <div className="w-5 h-5 mx-auto rounded-full bg-slate-50 border-2 border-slate-200"></div>
-                          </td>
-                        );
+                      if (wPhotos.length === 0) return <td key={w} className="p-4 text-center"><div className="w-5 h-5 mx-auto rounded-full bg-slate-50 border-2 border-slate-200"></div></td>;
+                      
+                      let isSuccess = false;
+                      if (isAriel) {
+                        const hasAriel = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
+                        const hasTide = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Tide'));
+                        isSuccess = hasAriel && hasTide;
+                      } else {
+                        isSuccess = wPhotos.some(p => p.status === 'approved');
                       }
-                      const hasApproved = wPhotos.some(p => p.status === 'approved');
-                      const circleColor = hasApproved ? 'bg-green-500 shadow-sm shadow-green-200' : 'bg-red-500 shadow-sm shadow-red-200';
+
+                      const circleColor = isSuccess ? 'bg-green-500 shadow-sm shadow-green-200' : 'bg-red-500 shadow-sm shadow-red-200';
+                      
                       return (
                         <td key={w} className="p-4 text-center">
-                          <div 
-                            onClick={() => openModal(wPhotos, store.name, w)}
-                            className={`w-5 h-5 mx-auto rounded-full cursor-pointer transition-transform hover:scale-125 ${circleColor}`}
-                            title="Click to view photos"
-                          ></div>
+                          <div onClick={() => openModal(wPhotos, store.name, w)} className={`w-5 h-5 mx-auto rounded-full cursor-pointer transition-transform hover:scale-125 ${circleColor}`} title="Click to view photos"></div>
                         </td>
                       );
                     })}
                     <td className="p-4 text-right">
-                      <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-slate-400'}`}>
-                        ₹{totalEarned}
-                      </span>
+                      <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-slate-400'}`}>₹{totalEarned}</span>
                       <span className="text-slate-400 text-sm ml-1 font-medium">/ ₹{maxEarning}</span>
                     </td>
                   </tr>
@@ -272,104 +266,61 @@ export default function Dashboard() {
 
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Approved</h3>
-          <p className="text-4xl font-extrabold text-green-600">{approvedCount}</p>
-        </div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Rejected</h3>
-          <p className="text-4xl font-extrabold text-red-500">{rejectedCount}</p>
-        </div>
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-2xl shadow-sm text-white flex flex-col justify-center">
-          <h3 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Processed Executions</h3>
-          <p className="text-4xl font-extrabold">{photos.length}</p>
-        </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Approved</h3><p className="text-4xl font-extrabold text-green-600">{approvedCount}</p></div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Rejected</h3><p className="text-4xl font-extrabold text-red-500">{rejectedCount}</p></div>
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-2xl shadow-sm text-white flex flex-col justify-center"><h3 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Processed Executions</h3><p className="text-4xl font-extrabold">{photos.length}</p></div>
       </div>
     );
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-32">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="text-slate-500 font-medium">Crunching payout data...</p>
-      </div>
-    );
-  }
+  if (loading) return <div className="flex flex-col items-center justify-center py-32"><div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-slate-500 font-medium">Crunching payout data...</p></div>;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
-      
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-slate-200">
         <div className="flex overflow-x-auto hide-scrollbar gap-2 w-full md:w-auto">
           {TABS.map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`whitespace-nowrap px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${
-                activeTab === tab 
-                  ? 'bg-blue-600 text-white shadow-md' 
-                  : 'text-slate-500 hover:bg-slate-100'
-              }`}
-            >
-              {tab}
-            </button>
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`whitespace-nowrap px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${activeTab === tab ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}>{tab}</button>
           ))}
         </div>
-
-        <button
-          onClick={exportToPDF}
-          disabled={isExporting}
-          className="w-full md:w-auto px-5 py-2.5 bg-slate-800 text-white text-sm font-bold rounded-lg shadow-md hover:bg-slate-900 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-        >
+        <button onClick={exportToPDF} disabled={isExporting} className="w-full md:w-auto px-5 py-2.5 bg-slate-800 text-white text-sm font-bold rounded-lg shadow-md hover:bg-slate-900 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {isExporting ? 'Generating PDF...' : '⬇ Download PDF Report'}
         </button>
       </div>
 
       {activeTab === 'General' ? renderGeneralTab() : renderBrandTable()}
 
-      {/* MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-bold text-slate-800">{modalTitle}</h3>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="w-8 h-8 flex items-center justify-center bg-slate-200 hover:bg-red-100 hover:text-red-600 text-slate-600 rounded-full transition-colors font-bold"
-              >
-                ✕
-              </button>
+              <button onClick={() => setIsModalOpen(false)} className="w-8 h-8 flex items-center justify-center bg-slate-200 hover:bg-red-100 hover:text-red-600 text-slate-600 rounded-full transition-colors font-bold">✕</button>
             </div>
-            
             <div className="p-6 overflow-y-auto bg-slate-100 flex-1">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {modalPhotos.map(photo => (
                   <div key={photo.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col relative">
-                    
-                    <div className={`absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm z-10 ${
-                      photo.status === 'approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
-                    }`}>
+                    <div className={`absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm z-10 ${photo.status === 'approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
                       {photo.status}
+                    </div>
+                    {/* Multi-Brand display in modal */}
+                    <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/80 text-white backdrop-blur-sm shadow-sm z-10">
+                      {photo.brand}
                     </div>
                     
                     <div className="h-64 bg-slate-900 flex items-center justify-center p-1">
                       <img src={photo.image_url} alt="Execution" className="w-full h-full object-contain" />
                     </div>
-
                     <div className="p-3 text-xs text-slate-500 font-medium text-center bg-white border-t border-slate-100">
                       Submitted: {new Date(photo.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })}
                     </div>
-
-                    {/* NEW: Rejection Reason Alert Box */}
                     {photo.status === 'rejected' && photo.rejection_reason && (
                       <div className="p-3 bg-red-50 text-red-800 text-xs font-semibold border-t border-red-100 text-center">
                         <span className="font-bold uppercase tracking-wider text-red-500 mr-2">Reason:</span> 
                         {photo.rejection_reason}
                       </div>
                     )}
-
                   </div>
                 ))}
               </div>
