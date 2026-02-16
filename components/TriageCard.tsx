@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
@@ -31,14 +32,12 @@ export default function TriageCard({
   
   const [isUpdating, setIsUpdating] = useState(false);
   
-  // Custom Dropdown State
   const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
   const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown if clicked outside of it
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -49,7 +48,6 @@ export default function TriageCard({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Filter stores based on what you type
   const filteredStores = dbStores.filter(store => 
     store.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -72,7 +70,7 @@ export default function TriageCard({
 
       if (error) throw error;
       
-      onComplete(id); // Removes card from screen instantly
+      onComplete(id);
     } catch (err: any) {
       alert(`Error updating task: ${err.message}`);
       setIsUpdating(false);
@@ -82,7 +80,6 @@ export default function TriageCard({
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col md:flex-row mb-4 transition-all hover:shadow-md">
       
-      {/* 1. THE IMAGE FIX: object-contain prevents cropping */}
       <div className="w-full md:w-1/3 h-72 bg-slate-100 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-200 p-2">
         <img 
           src={imageUrl} 
@@ -91,7 +88,6 @@ export default function TriageCard({
         />
       </div>
 
-      {/* 2. CARD CONTENT */}
       <div className="w-full md:w-2/3 p-6 flex flex-col justify-between">
         <div>
           <div className="flex justify-between items-start mb-4">
@@ -99,11 +95,11 @@ export default function TriageCard({
             <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{time}</span>
           </div>
           
+          {/* FIX: Escaped quotation marks prevent the build error */}
           <p className="text-slate-700 text-lg mb-6 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-100">
-            "{rawText}"
+            &quot;{rawText}&quot;
           </p>
           
-          {/* 3. SEARCHABLE CUSTOM DROPDOWN */}
           <div className="mb-6 relative" ref={dropdownRef}>
             <label className="block text-sm font-semibold text-slate-600 mb-2">Mapped Store</label>
             
@@ -113,7 +109,6 @@ export default function TriageCard({
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setIsDropdownOpen(true);
-                // If they change the text, un-select the current store until they click a new one
                 if (selectedStore && e.target.value !== selectedStore.name) {
                   setSelectedStore(null);
                 }
@@ -125,7 +120,6 @@ export default function TriageCard({
               }`}
             />
 
-            {/* Dropdown Options List */}
             {isDropdownOpen && (
               <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
                 {filteredStores.length === 0 ? (
@@ -148,14 +142,12 @@ export default function TriageCard({
               </ul>
             )}
             
-            {/* Warning if they typed a name but didn't select from the list */}
             {!selectedStore && searchQuery !== '' && (
               <p className="text-xs text-amber-600 mt-2 font-medium">Please select a store from the dropdown list.</p>
             )}
           </div>
         </div>
 
-        {/* 4. ACTION BUTTONS */}
         <div className="flex gap-3 mt-4">
           <button 
             onClick={() => handleAction('approved')}
