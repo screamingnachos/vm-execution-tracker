@@ -3,7 +3,6 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-// --- NEW PDF IMPORTS ---
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -20,6 +19,7 @@ interface Photo {
   created_at: string;
   status: 'approved' | 'rejected';
   image_url: string;
+  rejection_reason?: string; // NEW: Added rejection reason to the type
   stores?: { name: string };
 }
 
@@ -74,9 +74,10 @@ export default function Dashboard() {
       if (storesError) throw storesError;
       if (storesData) setAllStores(storesData);
 
+      // NEW: Added rejection_reason to the database select query
       const { data: photosData, error: photosError } = await supabase
         .from('photos')
-        .select(`id, brand, created_at, status, image_url, stores ( name )`)
+        .select(`id, brand, created_at, status, image_url, rejection_reason, stores ( name )`)
         .in('status', ['approved', 'rejected'])
         .not('brand', 'is', null)
         .order('created_at', { ascending: false });
@@ -105,19 +106,16 @@ export default function Dashboard() {
       const brandTabs = TABS.filter(t => t !== 'General');
 
       brandTabs.forEach((brand, index) => {
-        // Add a new page for every brand after the first one
         if (index > 0) doc.addPage();
 
-        // Page Title
         doc.setFontSize(16);
-        doc.setTextColor(15, 23, 42); // slate-900
+        doc.setTextColor(15, 23, 42);
         doc.text(`Execution Payout Report: ${brand}`, 14, 22);
         
         doc.setFontSize(10);
-        doc.setTextColor(100, 116, 139); // slate-500
+        doc.setTextColor(100, 116, 139);
         doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, 14, 28);
 
-        // Data Prep for this specific brand
         const eligibleStores = allStores
           .filter(s => s.eligible_brands?.includes(brand))
           .sort((a, b) => a.name.localeCompare(b.name));
@@ -126,7 +124,6 @@ export default function Dashboard() {
         const maxEarning = (EARNINGS_MAP[brand] || 0) * 4;
         const isAriel = brand === 'Ariel (End Cap) + Tide (Floor Stack)';
 
-        // Map the rows for the PDF table
         const tableData = eligibleStores.map(store => {
           const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name);
           const weeks: Record<number, Photo[]> = { 1: [], 2: [], 3: [], 4: [] };
@@ -135,11 +132,10 @@ export default function Dashboard() {
           let totalEarned = 0;
           const rowData = [store.name];
 
-          // Calculate columns for Weeks 1-4
           [1, 2, 3, 4].forEach(w => {
             const wPhotos = weeks[w];
             if (wPhotos.length === 0) {
-              rowData.push('-'); // No upload
+              rowData.push('-'); 
             } else {
               const approvedCount = wPhotos.filter(p => p.status === 'approved').length;
               if (isAriel) {
@@ -160,20 +156,18 @@ export default function Dashboard() {
             }
           });
 
-          // Add Earnings Column
           rowData.push(`Rs. ${totalEarned} / ${maxEarning}`);
           return rowData;
         });
 
-        // Generate the Table
         autoTable(doc, {
           startY: 35,
           head: [['Store Name', 'Week 1', 'Week 2', 'Week 3', 'Week 4', 'Total Earnings']],
           body: tableData,
           theme: 'grid',
-          headStyles: { fillColor: [37, 99, 235] }, // Tailwind blue-600
+          headStyles: { fillColor: [37, 99, 235] },
           styles: { fontSize: 9 },
-          alternateRowStyles: { fillColor: [248, 250, 252] } // Tailwind slate-50
+          alternateRowStyles: { fillColor: [248, 250, 252] }
         });
       });
 
@@ -306,10 +300,7 @@ export default function Dashboard() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
       
-      {/* HEADER CONTROLS */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-slate-200">
-        
-        {/* TABS */}
         <div className="flex overflow-x-auto hide-scrollbar gap-2 w-full md:w-auto">
           {TABS.map(tab => (
             <button
@@ -326,7 +317,6 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* EXPORT BUTTON */}
         <button
           onClick={exportToPDF}
           disabled={isExporting}
@@ -342,6 +332,7 @@ export default function Dashboard() {
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-bold text-slate-800">{modalTitle}</h3>
               <button 
@@ -351,21 +342,34 @@ export default function Dashboard() {
                 ✕
               </button>
             </div>
+            
             <div className="p-6 overflow-y-auto bg-slate-100 flex-1">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {modalPhotos.map(photo => (
                   <div key={photo.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col relative">
+                    
                     <div className={`absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm z-10 ${
                       photo.status === 'approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
                     }`}>
                       {photo.status}
                     </div>
+                    
                     <div className="h-64 bg-slate-900 flex items-center justify-center p-1">
                       <img src={photo.image_url} alt="Execution" className="w-full h-full object-contain" />
                     </div>
+
                     <div className="p-3 text-xs text-slate-500 font-medium text-center bg-white border-t border-slate-100">
                       Submitted: {new Date(photo.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })}
                     </div>
+
+                    {/* NEW: Rejection Reason Alert Box */}
+                    {photo.status === 'rejected' && photo.rejection_reason && (
+                      <div className="p-3 bg-red-50 text-red-800 text-xs font-semibold border-t border-red-100 text-center">
+                        <span className="font-bold uppercase tracking-wider text-red-500 mr-2">Reason:</span> 
+                        {photo.rejection_reason}
+                      </div>
+                    )}
+
                   </div>
                 ))}
               </div>
