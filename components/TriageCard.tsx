@@ -29,6 +29,15 @@ const MASTER_BRANDS = [
   'Ariel (End Cap) + Tide (Floor Stack)'
 ];
 
+const REJECTION_REASONS = [
+  "Very less quantity",
+  "Other brands present in the same shelf",
+  "It should be a shelf execution instead of End Cap Execution",
+  "It should be an end cap execution instead of shelf execution",
+  "Photo not clear",
+  "Other (Type custom reason)"
+];
+
 export default function TriageCard({ 
   id, 
   imageUrl, 
@@ -40,11 +49,17 @@ export default function TriageCard({
 }: TriageCardProps) {
   
   const [step, setStep] = useState<'store-select' | 'brand-select'>('store-select');
+  const [pendingAction, setPendingAction] = useState<'approved' | 'rejected'>('approved');
   const [isUpdating, setIsUpdating] = useState(false);
   
+  // Data States
   const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
   const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
   const [selectedBrand, setSelectedBrand] = useState<string>('');
+  
+  // Rejection States
+  const [rejectionReason, setRejectionReason] = useState<string>('');
+  const [customReason, setCustomReason] = useState<string>('');
   
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -84,47 +99,39 @@ export default function TriageCard({
     }
   };
 
-  // Rejects the task (keeps it in DB as 'rejected' for reporting)
-  const handleReject = async () => {
-    setIsUpdating(true);
-    try {
-      const { error } = await supabase
-        .from('photos')
-        .update({ status: 'rejected' })
-        .eq('id', id);
-
-      if (error) throw error;
-      onComplete(id);
-    } catch (err: any) {
-      alert(`Error rejecting task: ${err.message}`);
-      setIsUpdating(false);
-    }
-  };
-
-  // Permanently deletes the task from the database
   const handleDelete = async () => {
     const confirmDelete = window.confirm("Are you sure you want to permanently delete this photo?");
     if (!confirmDelete) return;
 
     setIsUpdating(true);
     try {
-      const { error } = await supabase
-        .from('photos')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('photos').delete().eq('id', id);
       if (error) throw error;
-      onComplete(id); // Instantly removes it from the screen
+      onComplete(id);
     } catch (err: any) {
       alert(`Error deleting task: ${err.message}`);
       setIsUpdating(false);
     }
   };
 
-  const handleFinalApprove = async () => {
+  const handleFinalSave = async () => {
     if (!selectedBrand) {
       alert("Please select a brand.");
       return;
+    }
+
+    // Validation for rejection reasons
+    let finalReason = null;
+    if (pendingAction === 'rejected') {
+      if (!rejectionReason) {
+        alert("Please select a reason for rejection.");
+        return;
+      }
+      if (rejectionReason === "Other (Type custom reason)" && !customReason.trim()) {
+        alert("Please type out your custom rejection reason.");
+        return;
+      }
+      finalReason = rejectionReason === "Other (Type custom reason)" ? customReason.trim() : rejectionReason;
     }
 
     setIsUpdating(true);
@@ -132,9 +139,10 @@ export default function TriageCard({
       const { error } = await supabase
         .from('photos')
         .update({ 
-          status: 'approved', 
+          status: pendingAction,
           store_id: selectedStore?.id || null,
-          brand: selectedBrand 
+          brand: selectedBrand,
+          rejection_reason: finalReason
         })
         .eq('id', id);
 
@@ -149,6 +157,7 @@ export default function TriageCard({
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col md:flex-row mb-4 transition-all hover:shadow-md">
       
+      {/* LEFT: Image */}
       <div className="w-full md:w-1/3 h-72 bg-slate-100 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-200 p-2">
         <img 
           src={imageUrl} 
@@ -157,6 +166,7 @@ export default function TriageCard({
         />
       </div>
 
+      {/* RIGHT: Form */}
       <div className="w-full md:w-2/3 p-6 flex flex-col justify-between">
         
         <div>
@@ -224,20 +234,27 @@ export default function TriageCard({
 
             <div className="flex gap-3 mt-4">
               <button 
-                onClick={() => setStep('brand-select')}
+                onClick={() => {
+                  setPendingAction('approved');
+                  setStep('brand-select');
+                }}
                 disabled={!selectedStore}
                 className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold shadow hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Approve & Tag Brand →
+                Approve & Tag →
               </button>
+              
               <button 
-                onClick={handleReject}
-                disabled={isUpdating}
-                className="flex-1 bg-red-100 text-red-700 py-3 rounded-xl font-bold hover:bg-red-200 transition-all disabled:opacity-50"
+                onClick={() => {
+                  setPendingAction('rejected');
+                  setStep('brand-select');
+                }}
+                disabled={!selectedStore}
+                className="flex-1 bg-red-100 text-red-700 py-3 rounded-xl font-bold hover:bg-red-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Reject
+                Reject & Tag →
               </button>
-              {/* --- NEW DELETE BUTTON --- */}
+              
               <button 
                 onClick={handleDelete}
                 disabled={isUpdating}
@@ -249,29 +266,34 @@ export default function TriageCard({
             </div>
           </>
         ) : (
-          <div className="bg-blue-50 p-5 rounded-xl border border-blue-100">
+          <div className={`p-5 rounded-xl border ${pendingAction === 'approved' ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'}`}>
             <div className="flex justify-between items-center mb-3">
-              <label className="block text-sm font-bold text-blue-900">Select Brand in Photo</label>
+              <label className={`block text-sm font-bold ${pendingAction === 'approved' ? 'text-blue-900' : 'text-red-900'}`}>
+                Tag Brand for {pendingAction === 'approved' ? 'Approval' : 'Rejection'}
+              </label>
               <button 
                 onClick={() => setStep('store-select')} 
-                className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                className={`text-xs font-semibold ${pendingAction === 'approved' ? 'text-blue-600 hover:text-blue-800' : 'text-red-600 hover:text-red-800'}`}
               >
                 ← Back to Store
               </button>
             </div>
             
-            <div className="flex flex-wrap gap-2 mb-6">
+            <div className="flex flex-wrap gap-2 mb-4">
               {MASTER_BRANDS.map(brand => {
                 const isSelected = selectedBrand === brand;
                 const isEligible = selectedStore?.eligible_brands?.includes(brand); 
                 
+                let selectedStyle = 'bg-blue-600 text-white border-blue-600 shadow-sm';
+                if (pendingAction === 'rejected') selectedStyle = 'bg-red-600 text-white border-red-600 shadow-sm';
+
                 return (
                   <button
                     key={brand}
                     onClick={() => setSelectedBrand(brand)}
                     className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
                       isSelected 
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                        ? selectedStyle
                         : isEligible 
                           ? 'bg-green-100 text-green-800 border-green-200 hover:bg-green-200' 
                           : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
@@ -283,12 +305,42 @@ export default function TriageCard({
               })}
             </div>
 
+            {/* REJECTION REASON DROPDOWN (Only visible if Rejecting) */}
+            {pendingAction === 'rejected' && (
+              <div className="mb-5 animate-in fade-in duration-200">
+                <label className="block text-sm font-bold text-red-900 mb-2">Reason for Rejection <span className="text-red-500">*</span></label>
+                <select 
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  className="w-full px-4 py-3 text-slate-900 border border-red-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none bg-white mb-3"
+                >
+                  <option value="" disabled>-- Select a reason --</option>
+                  {REJECTION_REASONS.map(reason => (
+                    <option key={reason} value={reason}>{reason}</option>
+                  ))}
+                </select>
+
+                {/* Custom Reason Text Box */}
+                {rejectionReason === "Other (Type custom reason)" && (
+                  <input 
+                    type="text"
+                    value={customReason}
+                    onChange={(e) => setCustomReason(e.target.value)}
+                    placeholder="Type the exact reason here..."
+                    className="w-full px-4 py-3 text-slate-900 border border-red-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none bg-white"
+                  />
+                )}
+              </div>
+            )}
+
             <button 
-              onClick={handleFinalApprove}
+              onClick={handleFinalSave}
               disabled={isUpdating || !selectedBrand}
-              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`w-full text-white py-3 rounded-xl font-bold shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2 ${
+                pendingAction === 'approved' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'
+              }`}
             >
-              {isUpdating ? 'Saving to Database...' : 'Confirm & Save Execution'}
+              {isUpdating ? 'Saving to Database...' : `Confirm & ${pendingAction === 'approved' ? 'Approve' : 'Reject'} Execution`}
             </button>
           </div>
         )}
