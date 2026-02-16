@@ -4,7 +4,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
-// --- TYPES ---
 interface Store {
   id: string;
   name: string;
@@ -31,7 +30,6 @@ export default function TriageCard({
 }: TriageCardProps) {
   
   const [isUpdating, setIsUpdating] = useState(false);
-  
   const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
   const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -52,9 +50,30 @@ export default function TriageCard({
     store.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const handleCreateStore = async () => {
+    setIsUpdating(true);
+    try {
+      const { data, error } = await supabase
+        .from('stores')
+        .insert([{ name: searchQuery }])
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      setSelectedStore(data);
+      setSearchQuery(data.name);
+      setIsDropdownOpen(false);
+    } catch (err: any) {
+      alert(`Error creating store: ${err.message}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleAction = async (status: 'approved' | 'rejected') => {
     if (status === 'approved' && !selectedStore) {
-      alert("Please select a store before approving.");
+      alert("Please select or add a store before approving.");
       return;
     }
 
@@ -95,7 +114,6 @@ export default function TriageCard({
             <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{time}</span>
           </div>
           
-          {/* FIX: Escaped quotation marks prevent the build error */}
           <p className="text-slate-700 text-lg mb-6 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-100">
             &quot;{rawText}&quot;
           </p>
@@ -115,7 +133,7 @@ export default function TriageCard({
               }}
               onFocus={() => setIsDropdownOpen(true)}
               placeholder="Search store name..."
-              className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors ${
+              className={`w-full px-4 py-3 text-slate-900 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors ${
                 !selectedStore && searchQuery !== '' ? 'border-amber-400 bg-amber-50' : 'border-slate-300'
               }`}
             />
@@ -123,7 +141,16 @@ export default function TriageCard({
             {isDropdownOpen && (
               <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
                 {filteredStores.length === 0 ? (
-                  <li className="px-4 py-3 text-slate-500 text-sm">No stores found.</li>
+                  <li className="px-4 py-3 flex justify-between items-center bg-slate-50 border-b border-slate-100">
+                    <span className="text-slate-500 text-sm">No stores found.</span>
+                    <button 
+                      onClick={handleCreateStore}
+                      disabled={isUpdating || !searchQuery}
+                      className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow-sm hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {isUpdating ? 'Adding...' : '+ Add Store'}
+                    </button>
+                  </li>
                 ) : (
                   filteredStores.map(store => (
                     <li 
@@ -143,7 +170,7 @@ export default function TriageCard({
             )}
             
             {!selectedStore && searchQuery !== '' && (
-              <p className="text-xs text-amber-600 mt-2 font-medium">Please select a store from the dropdown list.</p>
+              <p className="text-xs text-amber-600 mt-2 font-medium">Please select or add a store.</p>
             )}
           </div>
         </div>

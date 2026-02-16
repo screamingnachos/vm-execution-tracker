@@ -71,7 +71,7 @@ export default function Home() {
   async function fetchPendingTasks() {
     setLoading(true);
     try {
-      const { data: storesData } = await supabase.from('stores').select('*');
+      const { data: storesData } = await supabase.from('stores').select('*').limit(5000);
       if (storesData) setDbStores(storesData);
 
       const { data: photosData, error: photosError } = await supabase
