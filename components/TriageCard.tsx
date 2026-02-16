@@ -1,152 +1,176 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Check, X, Copy } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { getBestStoreMatch } from '../lib/matcher';
-import { storeNames } from '../lib/stores';
 
-export default function TriageCard({ id, imageUrl, rawText, time, onComplete }: any) {
-  const [activeTab, setActiveTab] = useState<'default' | 'valid' | 'invalid'>('default');
-  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
-  const [rejectReason, setRejectReason] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+// --- TYPES ---
+interface Store {
+  id: string;
+  name: string;
+}
+
+interface TriageCardProps {
+  id: string;
+  imageUrl: string;
+  rawText: string;
+  time: string;
+  dbStores: Store[];
+  initialStore?: Store | null;
+  onComplete: (id: string) => void;
+}
+
+export default function TriageCard({ 
+  id, 
+  imageUrl, 
+  rawText, 
+  time, 
+  dbStores, 
+  initialStore, 
+  onComplete 
+}: TriageCardProps) {
   
-  // New state for the store dropdown, pre-filled by the algorithm
-  const [selectedStore, setSelectedStore] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  
+  // Custom Dropdown State
+  const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
+  const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Run the fuzzy matcher when the component loads
+  // Close dropdown if clicked outside of it
   useEffect(() => {
-    const bestMatch = getBestStoreMatch(rawText);
-    setSelectedStore(bestMatch);
-  }, [rawText]);
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-  const brands = ['Reckitt', 'Veeba', 'Ariel', 'Tide', 'Surf Excel', 'Lotus', 'Santoor'];
-  const reasons = [
-    'Too less quantity',
-    'It should be a shelf execution',
-    'It should be an end cap execution',
-    'Do not mix different brand in a single execution',
-    'Others'
-  ];
+  // Filter stores based on what you type
+  const filteredStores = dbStores.filter(store => 
+    store.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const toggleBrand = (brand: string) => {
-    setSelectedBrands(prev => 
-      prev.includes(brand) ? prev.filter(b => b !== brand) : [...prev, brand]
-    );
-  };
+  const handleAction = async (status: 'approved' | 'rejected') => {
+    if (status === 'approved' && !selectedStore) {
+      alert("Please select a store before approving.");
+      return;
+    }
 
-  const handleSubmit = async (status: string) => {
-    setIsSubmitting(true);
-    
-    // Note: We will handle linking this store name to the exact Supabase store_id later
-    const updateData: any = { status };
-    if (status === 'valid') updateData.tagged_brands = selectedBrands;
-    if (status === 'invalid') updateData.rejection_reason = rejectReason;
+    setIsUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('photos')
+        .update({ 
+          status: status, 
+          store_id: selectedStore?.id || null 
+        })
+        .eq('id', id);
 
-    await supabase.from('photos').update(updateData).eq('id', id);
-    
-    setIsSubmitting(false);
-    onComplete(id);
+      if (error) throw error;
+      
+      onComplete(id); // Removes card from screen instantly
+    } catch (err: any) {
+      alert(`Error updating task: ${err.message}`);
+      setIsUpdating(false);
+    }
   };
 
   return (
-    <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-4">
-      <div className="w-64 h-64 bg-slate-100 flex-shrink-0">
-        <img src={imageUrl} alt="Execution" className="w-full h-full object-cover" />
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col md:flex-row mb-4 transition-all hover:shadow-md">
+      
+      {/* 1. THE IMAGE FIX: object-contain prevents cropping */}
+      <div className="w-full md:w-1/3 h-72 bg-slate-100 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-200 p-2">
+        <img 
+          src={imageUrl} 
+          alt="Execution photo" 
+          className="w-full h-full object-contain rounded-lg"
+        />
       </div>
 
-      <div className="p-6 flex flex-col justify-between w-full">
+      {/* 2. CARD CONTENT */}
+      <div className="w-full md:w-2/3 p-6 flex flex-col justify-between">
         <div>
-          <p className="text-sm text-slate-500 mb-1">{time}</p>
-          <p className="text-lg font-medium text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-100 mb-3">
-            {rawText}
+          <div className="flex justify-between items-start mb-4">
+            <span className="text-xs font-bold tracking-wider text-slate-400 uppercase">Slack Submission</span>
+            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{time}</span>
+          </div>
+          
+          <p className="text-slate-700 text-lg mb-6 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-100">
+            "{rawText}"
           </p>
           
-          {/* STORE MAPPING DROPDOWN */}
-          <div className="flex flex-col">
-            <label className="text-sm font-semibold text-slate-700 mb-1">Mapped Store (Verify):</label>
-            <select 
-              className="p-2 border border-slate-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500"
-              value={selectedStore}
-              onChange={(e) => setSelectedStore(e.target.value)}
-            >
-              <option value="">-- Select a Store --</option>
-              {storeNames.map(store => (
-                <option key={store} value={store}>{store}</option>
-              ))}
-            </select>
+          {/* 3. SEARCHABLE CUSTOM DROPDOWN */}
+          <div className="mb-6 relative" ref={dropdownRef}>
+            <label className="block text-sm font-semibold text-slate-600 mb-2">Mapped Store</label>
+            
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setIsDropdownOpen(true);
+                // If they change the text, un-select the current store until they click a new one
+                if (selectedStore && e.target.value !== selectedStore.name) {
+                  setSelectedStore(null);
+                }
+              }}
+              onFocus={() => setIsDropdownOpen(true)}
+              placeholder="Search store name..."
+              className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none transition-colors ${
+                !selectedStore && searchQuery !== '' ? 'border-amber-400 bg-amber-50' : 'border-slate-300'
+              }`}
+            />
+
+            {/* Dropdown Options List */}
+            {isDropdownOpen && (
+              <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                {filteredStores.length === 0 ? (
+                  <li className="px-4 py-3 text-slate-500 text-sm">No stores found.</li>
+                ) : (
+                  filteredStores.map(store => (
+                    <li 
+                      key={store.id}
+                      onClick={() => {
+                        setSelectedStore(store);
+                        setSearchQuery(store.name);
+                        setIsDropdownOpen(false);
+                      }}
+                      className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-slate-700 transition-colors border-b border-slate-50 last:border-0"
+                    >
+                      {store.name}
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+            
+            {/* Warning if they typed a name but didn't select from the list */}
+            {!selectedStore && searchQuery !== '' && (
+              <p className="text-xs text-amber-600 mt-2 font-medium">Please select a store from the dropdown list.</p>
+            )}
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="mt-4">
-          {activeTab === 'default' && (
-            <div className="flex gap-3">
-              <button onClick={() => setActiveTab('valid')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium flex justify-center items-center gap-2">
-                <Check size={18} /> Valid
-              </button>
-              <button onClick={() => setActiveTab('invalid')} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2.5 rounded-lg font-medium flex justify-center items-center gap-2">
-                <X size={18} /> Invalid
-              </button>
-              <button onClick={() => handleSubmit('redundant')} disabled={isSubmitting} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-lg font-medium flex justify-center items-center gap-2 disabled:opacity-50">
-                <Copy size={18} /> {isSubmitting ? 'Saving...' : 'Redundant'}
-              </button>
-            </div>
-          )}
-
-          {activeTab === 'valid' && (
-            <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-              <p className="text-sm font-semibold text-green-800 mb-2">Select Brands Present:</p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {brands.map(brand => (
-                  <button
-                    key={brand}
-                    onClick={() => toggleBrand(brand)}
-                    className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${selectedBrands.includes(brand) ? 'bg-green-600 text-white border-green-600' : 'bg-white text-slate-600 border-slate-300'}`}
-                  >
-                    {brand}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setActiveTab('default')} className="px-4 py-2 text-slate-500 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">Cancel</button>
-                <button 
-                  onClick={() => handleSubmit('valid')} 
-                  disabled={selectedBrands.length === 0 || !selectedStore || isSubmitting}
-                  className="flex-1 bg-green-600 text-white py-2 rounded-lg font-medium disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Saving...' : 'Confirm Approval'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'invalid' && (
-            <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-              <p className="text-sm font-semibold text-red-800 mb-2">Select Rejection Reason:</p>
-              <select 
-                className="w-full p-2.5 mb-4 border border-red-200 rounded-lg bg-white text-sm"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-              >
-                <option value="" disabled>Choose a reason...</option>
-                {reasons.map(reason => (
-                  <option key={reason} value={reason}>{reason}</option>
-                ))}
-              </select>
-              <div className="flex gap-2">
-                <button onClick={() => setActiveTab('default')} className="px-4 py-2 text-slate-500 bg-white border border-slate-200 rounded-lg">Cancel</button>
-                <button 
-                  onClick={() => handleSubmit('invalid')} 
-                  disabled={!rejectReason || !selectedStore || isSubmitting}
-                  className="flex-1 bg-red-600 text-white py-2 rounded-lg font-medium disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Saving...' : 'Confirm Rejection'}
-                </button>
-              </div>
-            </div>
-          )}
+        {/* 4. ACTION BUTTONS */}
+        <div className="flex gap-3 mt-4">
+          <button 
+            onClick={() => handleAction('approved')}
+            disabled={isUpdating || !selectedStore}
+            className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold shadow hover:bg-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isUpdating ? 'Saving...' : 'Approve'}
+          </button>
+          <button 
+            onClick={() => handleAction('rejected')}
+            disabled={isUpdating}
+            className="flex-1 bg-red-100 text-red-700 py-3 rounded-xl font-bold hover:bg-red-200 transition-all disabled:opacity-50"
+          >
+            Reject
+          </button>
         </div>
       </div>
     </div>
