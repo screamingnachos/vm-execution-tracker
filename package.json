@@ -18,6 +18,8 @@
     "eslint": "8.49.0",
     "eslint-config-next": "13.5.1",
     "fuse.js": "^7.1.0",
+    "jspdf": "^4.1.0",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.564.0",
     "next": "13.5.1",
     "postcss": "8.4.30",

@@ -3,6 +3,9 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+// --- NEW PDF IMPORTS ---
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- TYPES ---
 interface Store {
@@ -40,7 +43,6 @@ const TABS = [
   'Ariel (End Cap) + Tide (Floor Stack)'
 ];
 
-// --- HELPER FUNCTIONS ---
 const getWeekNumber = (dateString: string) => {
   const day = new Date(dateString).getDate();
   if (day <= 7) return 1;
@@ -51,13 +53,12 @@ const getWeekNumber = (dateString: string) => {
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
   const [activeTab, setActiveTab] = useState('General');
   
-  // Data States
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [allStores, setAllStores] = useState<Store[]>([]);
   
-  // Modal State
   const [modalPhotos, setModalPhotos] = useState<Photo[]>([]);
   const [modalTitle, setModalTitle] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -69,16 +70,10 @@ export default function Dashboard() {
   async function fetchData() {
     setLoading(true);
     try {
-      // 1. Fetch Master Stores List (Needed to find missing submissions)
-      const { data: storesData, error: storesError } = await supabase
-        .from('stores')
-        .select('*')
-        .limit(5000);
-      
+      const { data: storesData, error: storesError } = await supabase.from('stores').select('*').limit(5000);
       if (storesError) throw storesError;
       if (storesData) setAllStores(storesData);
 
-      // 2. Fetch Processed Photos
       const { data: photosData, error: photosError } = await supabase
         .from('photos')
         .select(`id, brand, created_at, status, image_url, stores ( name )`)
@@ -102,16 +97,101 @@ export default function Dashboard() {
     setIsModalOpen(true);
   };
 
-  // --- DATA PROCESSING FOR BRAND TABS ---
+  // --- PDF GENERATOR ENGINE ---
+  const exportToPDF = () => {
+    setIsExporting(true);
+    try {
+      const doc = new jsPDF();
+      const brandTabs = TABS.filter(t => t !== 'General');
+
+      brandTabs.forEach((brand, index) => {
+        // Add a new page for every brand after the first one
+        if (index > 0) doc.addPage();
+
+        // Page Title
+        doc.setFontSize(16);
+        doc.setTextColor(15, 23, 42); // slate-900
+        doc.text(`Execution Payout Report: ${brand}`, 14, 22);
+        
+        doc.setFontSize(10);
+        doc.setTextColor(100, 116, 139); // slate-500
+        doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, 14, 28);
+
+        // Data Prep for this specific brand
+        const eligibleStores = allStores
+          .filter(s => s.eligible_brands?.includes(brand))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        const brandPhotos = photos.filter(p => p.brand === brand);
+        const maxEarning = (EARNINGS_MAP[brand] || 0) * 4;
+        const isAriel = brand === 'Ariel (End Cap) + Tide (Floor Stack)';
+
+        // Map the rows for the PDF table
+        const tableData = eligibleStores.map(store => {
+          const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name);
+          const weeks: Record<number, Photo[]> = { 1: [], 2: [], 3: [], 4: [] };
+          storePhotos.forEach(p => weeks[getWeekNumber(p.created_at)].push(p));
+
+          let totalEarned = 0;
+          const rowData = [store.name];
+
+          // Calculate columns for Weeks 1-4
+          [1, 2, 3, 4].forEach(w => {
+            const wPhotos = weeks[w];
+            if (wPhotos.length === 0) {
+              rowData.push('-'); // No upload
+            } else {
+              const approvedCount = wPhotos.filter(p => p.status === 'approved').length;
+              if (isAriel) {
+                if (approvedCount >= 2) {
+                  totalEarned += EARNINGS_MAP[brand];
+                  rowData.push('Approved (2+)');
+                } else {
+                  rowData.push(approvedCount === 1 ? 'Missed (Only 1)' : 'Rejected');
+                }
+              } else {
+                if (approvedCount >= 1) {
+                  totalEarned += EARNINGS_MAP[brand];
+                  rowData.push('Approved');
+                } else {
+                  rowData.push('Rejected');
+                }
+              }
+            }
+          });
+
+          // Add Earnings Column
+          rowData.push(`Rs. ${totalEarned} / ${maxEarning}`);
+          return rowData;
+        });
+
+        // Generate the Table
+        autoTable(doc, {
+          startY: 35,
+          head: [['Store Name', 'Week 1', 'Week 2', 'Week 3', 'Week 4', 'Total Earnings']],
+          body: tableData,
+          theme: 'grid',
+          headStyles: { fillColor: [37, 99, 235] }, // Tailwind blue-600
+          styles: { fontSize: 9 },
+          alternateRowStyles: { fillColor: [248, 250, 252] } // Tailwind slate-50
+        });
+      });
+
+      doc.save(`Franchise_Payouts_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      alert("Error generating PDF.");
+      console.error(err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const renderBrandTable = () => {
-    // 1. Find all stores that are ELIGIBLE for this specific brand
     const eligibleStores = allStores
       .filter(s => s.eligible_brands?.includes(activeTab))
-      .sort((a, b) => a.name.localeCompare(b.name)); // Alphabetical order
+      .sort((a, b) => a.name.localeCompare(b.name));
 
-    // 2. Filter photos for this specific brand
     const brandPhotos = photos.filter(p => p.brand === activeTab);
-    
     const maxEarning = (EARNINGS_MAP[activeTab] || 0) * 4;
     const isAriel = activeTab === 'Ariel (End Cap) + Tide (Floor Stack)';
 
@@ -137,18 +217,12 @@ export default function Dashboard() {
               </tr>
             ) : (
               eligibleStores.map((store) => {
-                // Get photos belonging to this store
                 const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name);
-                
-                // Group photos by week
                 const weeks: Record<number, Photo[]> = { 1: [], 2: [], 3: [], 4: [] };
-                storePhotos.forEach(p => {
-                  weeks[getWeekNumber(p.created_at)].push(p);
-                });
+                storePhotos.forEach(p => weeks[getWeekNumber(p.created_at)].push(p));
 
                 let totalEarned = 0;
 
-                // Calculate total earnings across the 4 weeks
                 [1, 2, 3, 4].forEach(w => {
                   const approvedCount = weeks[w].filter(p => p.status === 'approved').length;
                   if (isAriel) {
@@ -161,11 +235,8 @@ export default function Dashboard() {
                 return (
                   <tr key={store.id} className="hover:bg-slate-50 transition-colors">
                     <td className="p-4 font-semibold text-slate-800">{store.name}</td>
-                    
                     {[1, 2, 3, 4].map(w => {
                       const wPhotos = weeks[w];
-                      
-                      // Renders an empty, hollow circle if no photos were sent
                       if (wPhotos.length === 0) {
                         return (
                           <td key={w} className="p-4 text-center">
@@ -173,10 +244,8 @@ export default function Dashboard() {
                           </td>
                         );
                       }
-                      
                       const hasApproved = wPhotos.some(p => p.status === 'approved');
                       const circleColor = hasApproved ? 'bg-green-500 shadow-sm shadow-green-200' : 'bg-red-500 shadow-sm shadow-red-200';
-
                       return (
                         <td key={w} className="p-4 text-center">
                           <div 
@@ -187,7 +256,6 @@ export default function Dashboard() {
                         </td>
                       );
                     })}
-
                     <td className="p-4 text-right">
                       <span className={`font-bold ${totalEarned > 0 ? 'text-green-600' : 'text-slate-400'}`}>
                         ₹{totalEarned}
@@ -204,7 +272,6 @@ export default function Dashboard() {
     );
   };
 
-  // --- GENERAL TAB VIEW ---
   const renderGeneralTab = () => {
     const approvedCount = photos.filter(p => p.status === 'approved').length;
     const rejectedCount = photos.filter(p => p.status === 'rejected').length;
@@ -239,31 +306,42 @@ export default function Dashboard() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
       
-      {/* TABS NAVIGATION */}
-      <div className="flex overflow-x-auto hide-scrollbar gap-2 bg-white p-2 rounded-xl shadow-sm border border-slate-200">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`whitespace-nowrap px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${
-              activeTab === tab 
-                ? 'bg-blue-600 text-white shadow-md' 
-                : 'text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* HEADER CONTROLS */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-2 rounded-xl shadow-sm border border-slate-200">
+        
+        {/* TABS */}
+        <div className="flex overflow-x-auto hide-scrollbar gap-2 w-full md:w-auto">
+          {TABS.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`whitespace-nowrap px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${
+                activeTab === tab 
+                  ? 'bg-blue-600 text-white shadow-md' 
+                  : 'text-slate-500 hover:bg-slate-100'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* EXPORT BUTTON */}
+        <button
+          onClick={exportToPDF}
+          disabled={isExporting}
+          className="w-full md:w-auto px-5 py-2.5 bg-slate-800 text-white text-sm font-bold rounded-lg shadow-md hover:bg-slate-900 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {isExporting ? 'Generating PDF...' : '⬇ Download PDF Report'}
+        </button>
       </div>
 
-      {/* DYNAMIC CONTENT */}
       {activeTab === 'General' ? renderGeneralTab() : renderBrandTable()}
 
-      {/* PHOTO VIEWER MODAL */}
+      {/* MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-3xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
-            
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-bold text-slate-800">{modalTitle}</h3>
               <button 
@@ -273,26 +351,18 @@ export default function Dashboard() {
                 ✕
               </button>
             </div>
-
             <div className="p-6 overflow-y-auto bg-slate-100 flex-1">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {modalPhotos.map(photo => (
                   <div key={photo.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col relative">
-                    
                     <div className={`absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm z-10 ${
                       photo.status === 'approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
                     }`}>
                       {photo.status}
                     </div>
-
                     <div className="h-64 bg-slate-900 flex items-center justify-center p-1">
-                      <img 
-                        src={photo.image_url} 
-                        alt="Execution" 
-                        className="w-full h-full object-contain"
-                      />
+                      <img src={photo.image_url} alt="Execution" className="w-full h-full object-contain" />
                     </div>
-                    
                     <div className="p-3 text-xs text-slate-500 font-medium text-center bg-white border-t border-slate-100">
                       Submitted: {new Date(photo.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })}
                     </div>
@@ -300,11 +370,9 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
-
           </div>
         </div>
       )}
-
     </div>
   );
 }
