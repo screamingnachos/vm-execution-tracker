@@ -19,7 +19,7 @@ export async function POST() {
     const slackUrl = new URL('https://slack.com/api/conversations.history');
     slackUrl.searchParams.append('channel', channelId);
     slackUrl.searchParams.append('oldest', oldestTs);
-    slackUrl.searchParams.append('limit', '20'); // Small batch to prevent timeout
+    //slackUrl.searchParams.append('limit', '10000'); // Small batch to prevent timeout
 
     // 3. Fetch History
     const slackRes = await fetch(slackUrl.toString(), {
