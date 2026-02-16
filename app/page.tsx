@@ -108,7 +108,13 @@ export default function Home() {
       const data = await res.json();
       
       if (data.success) {
-        alert(`Success! Imported ${data.count} photos.`);
+        if (data.hasMore) {
+          // The server stopped at 500 messages to prevent crashing
+          alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
+        } else {
+          // The server successfully reached the Feb 1st limit
+          alert(`Fully Synced! Scanned ${data.scanned} messages all the way back to Feb 1st.\n\nImported ${data.count} new photos.`);
+        }
       } else {
         alert(`Sync Notice: ${data.error}`);
       }
