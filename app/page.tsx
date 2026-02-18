@@ -1,12 +1,13 @@
 'use client';
-import { supabase } from '../lib/supabase';
+
 import { useState, useEffect } from 'react';
 import TriageCard from '../components/TriageCard';
 import Dashboard from '../components/Dashboard';
+import { supabase } from '../lib/supabase'; // <-- Ensures database connection works
 
 // --- ADMIN CONFIGURATION ---
-const ADMIN_EMAILS = ['anuj.dalvi@superk.in']; // Your admin email
-const ADMIN_PASSWORD = 'superk-admin'; // Change this to a secure password
+const ADMIN_EMAILS = ['anuj.dalvi@superk.in'];
+const ADMIN_PASSWORD = 'superk-admin';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'Dashboard' | 'Triage'>('Dashboard');
@@ -17,53 +18,64 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  // Triage States (Assuming you have these for your queue)
-  const [pendingTasks, setPendingTasks] = useState([]);
-  const [dbStores, setDbStores] = useState([]);
+  // Triage States
+  const [pendingTasks, setPendingTasks] = useState<any[]>([]);
+  const [dbStores, setDbStores] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
- // --- YOUR EXISTING DATA FUNCTIONS ---
- const fetchPendingTasks = async () => {
-  setLoading(true);
-  try {
-    // 1. Fetch Stores
-    const { data: storesRes } = await supabase.from('stores').select('*');
-    if (storesRes) setDbStores(storesRes as any);
+  // --- DATA FETCHING & SYNC LOGIC ---
+  const fetchPendingTasks = async () => {
+    setLoading(true);
+    try {
+      const { data: storesRes } = await supabase.from('stores').select('*');
+      if (storesRes) setDbStores(storesRes);
 
-    // 2. Fetch Pending Photos
-    const { data: photosRes } = await supabase
-      .from('photos')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true });
-    if (photosRes) setPendingTasks(photosRes as any);
-  } catch (error: any) {
-    console.error("Fetch error:", error.message);
-  } finally {
-    setLoading(false);
-  }
-};
-
-const handleSync = async () => {
-  setLoading(true);
-  try {
-    const res = await fetch('/api/sync', { method: 'POST' });
-    const data = await res.json();
-    
-    if (data.success) {
-      if (data.hasMore) {
-        alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
-      } else {
-        alert(`Fully Synced! Scanned ${data.scanned} messages all the way back to Feb 1st.\n\nImported ${data.count} new photos.`);
-      }
-    } else {
-      alert(`Sync Notice: ${data.error}`);
+      const { data: photosRes } = await supabase
+        .from('photos')
+        .select(`
+          id,
+          image_url,
+          created_at,
+          status,
+          slack_messages ( raw_text, created_at )
+        `)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+        
+      if (photosRes) setPendingTasks(photosRes);
+    } catch (error: any) {
+      console.error("Fetch error:", error.message);
+    } finally {
+      setLoading(false);
     }
-  } catch (error: any) {
-    alert(`Network Error: ${error.message}`);
-  }
-  fetchPendingTasks();
-};
+  };
+
+  const handleSync = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+      
+      if (data.success) {
+        if (data.hasMore) {
+          alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
+        } else {
+          alert(`Fully Synced! Scanned ${data.scanned} messages all the way back to Feb 1st.\n\nImported ${data.count} new photos.`);
+        }
+      } else {
+        alert(`Sync Notice: ${data.error}`);
+      }
+    } catch (error: any) {
+      alert(`Network Error: ${error.message}`);
+    }
+    // Refresh the queue after syncing!
+    await fetchPendingTasks();
+  };
+
+  // Removes a task from the screen immediately after you approve/reject it
+  const removeTask = (taskId: string) => {
+    setPendingTasks((prev) => prev.filter((task) => task.id !== taskId));
+  };
 
   useEffect(() => {
     if (isAdmin) {
@@ -77,7 +89,7 @@ const handleSync = async () => {
     if (ADMIN_EMAILS.includes(email.toLowerCase()) && password === ADMIN_PASSWORD) {
       setIsAdmin(true);
       setLoginError('');
-      setPassword(''); // Clears password from input for security
+      setPassword(''); 
     } else {
       setLoginError('Invalid admin credentials.');
     }
@@ -85,7 +97,7 @@ const handleSync = async () => {
 
   const handleLogout = () => {
     setIsAdmin(false);
-    setActiveTab('Dashboard'); // Boots them back to the public dashboard
+    setActiveTab('Dashboard'); 
   };
 
   return (
@@ -94,7 +106,6 @@ const handleSync = async () => {
       {/* GLOBAL NAVIGATION HEADER */}
       <div className="max-w-6xl mx-auto mb-8 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-200 pb-4">
         
-        {/* Navigation Tabs */}
         <div className="flex gap-4">
           <button 
             onClick={() => setActiveTab('Dashboard')}
@@ -110,7 +121,6 @@ const handleSync = async () => {
           </button>
         </div>
 
-        {/* LOGOUT BUTTON (Only visible if logged in and on Triage tab) */}
         {isAdmin && activeTab === 'Triage' && (
           <button 
             onClick={handleLogout}
@@ -125,10 +135,9 @@ const handleSync = async () => {
       {activeTab === 'Dashboard' ? (
         <Dashboard isAdmin={isAdmin} />
       ) : (
-        /* PROTECTED TRIAGE ROUTE */
+        
         isAdmin ? (
           <div className="max-w-4xl mx-auto">
-            {/* Sync Button */}
             <div className="flex justify-between items-center mb-6">
               <h1 className="text-2xl font-bold text-slate-800">Pending Approvals</h1>
               <button 
@@ -140,23 +149,28 @@ const handleSync = async () => {
               </button>
             </div>
 
-            {/* Map over your TriageCards here just like you had before */}
             {pendingTasks.length === 0 && !loading ? (
-              <div className="text-center py-20 bg-white rounded-2xl border border-slate-200">
+              <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 shadow-sm">
                 <span className="text-4xl">🎉</span>
                 <p className="text-slate-500 font-medium mt-4">All caught up! Queue is empty.</p>
               </div>
             ) : (
               <div>
-                {/* pendingTasks.map((task) => (
-                    <TriageCard key={task.id} ... />
-                  ))
-                */}
+                {pendingTasks.map((task) => (
+                  <TriageCard 
+                    key={task.id}
+                    id={task.id}
+                    imageUrl={task.image_url}
+                    rawText={task.slack_messages?.raw_text || 'No text provided'}
+                    time={new Date(task.created_at).toLocaleString('en-IN')}
+                    dbStores={dbStores}
+                    onComplete={removeTask}
+                  />
+                ))}
               </div>
             )}
           </div>
         ) : (
-          /* LOGIN SCREEN */
           <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-20">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 text-center">Admin Login</h2>
             <form onSubmit={handleLogin} className="space-y-4">
