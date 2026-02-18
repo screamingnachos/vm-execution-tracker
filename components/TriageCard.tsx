@@ -213,13 +213,13 @@ export default function TriageCard({
             </div>
             
             <div className="flex flex-wrap gap-2 mb-4">
-              {MASTER_BRANDS.map(brand => {
+            {MASTER_BRANDS.map(brand => {
                 const isSelected = selectedBrands.includes(brand);
                 
-                // 4. MAP COMBINED DATABASE NAME TO SPLIT BUTTONS FOR HIGHLIGHTING
+                // Graceful fallback incase the database hasn't been updated yet
                 let isEligible = selectedStore?.eligible_brands?.includes(brand);
-                if (brand === 'Ariel' || brand === 'Tide') {
-                  if (selectedStore?.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)')) isEligible = true;
+                if ((brand === 'Ariel' || brand === 'Tide') && selectedStore?.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)')) {
+                  isEligible = true;
                 }
                 
                 let selectedStyle = 'bg-blue-600 text-white border-blue-600 shadow-sm';

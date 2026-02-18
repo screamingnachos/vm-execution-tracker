@@ -22,24 +22,18 @@ interface Photo {
   stores?: { name: string };
 }
 
+// 1. SPLIT ARIEL & TIDE AND ASSIGNED ₹500 EACH (Adjust if needed)
 const EARNINGS_MAP: Record<string, number> = {
   'Reckitt': 750,
   'Veeba': 250,
-  'Ariel (End Cap) + Tide (Floor Stack)': 1000,
   'Surf Excel': 750,
   'Lotus': 400,
-  'Santoor': 400
+  'Santoor': 400,
+  'Ariel': 500, 
+  'Tide': 500
 };
 
-const TABS = [
-  'General',
-  'Veeba',
-  'Santoor',
-  'Reckitt',
-  'Lotus',
-  'Surf Excel',
-  'Ariel (End Cap) + Tide (Floor Stack)'
-];
+const TABS = ['General', 'Veeba', 'Santoor', 'Reckitt', 'Lotus', 'Surf Excel', 'Ariel', 'Tide'];
 
 const getWeekNumber = (dateString: string) => {
   const day = new Date(dateString).getDate();
@@ -49,7 +43,8 @@ const getWeekNumber = (dateString: string) => {
   return 4;
 };
 
-export default function Dashboard() {
+// 2. ACCEPT isAdmin PROP
+export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [activeTab, setActiveTab] = useState('General');
@@ -92,7 +87,44 @@ export default function Dashboard() {
     setIsModalOpen(true);
   };
 
-  // --- PDF EXPORT ENGINE ---
+  // 3. ADMIN TOGGLE FUNCTION
+  // 3. ADMIN TOGGLE FUNCTION
+  const handleToggleStatus = async (photo: Photo) => {
+    const newStatus = photo.status === 'approved' ? 'rejected' : 'approved';
+    let reason: string | undefined = undefined;
+
+    if (newStatus === 'rejected') {
+      const promptResult = window.prompt("Please enter the reason for rejecting this execution:");
+      if (promptResult === null) return; // Admin clicked cancel
+      reason = promptResult;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('photos')
+        .update({ 
+          status: newStatus, 
+          rejection_reason: reason || null // Supabase needs null to clear it
+        })
+        .eq('id', photo.id);
+
+      if (error) throw error;
+
+      // Tell TypeScript this perfectly matches the Photo interface
+      const updatedPhoto: Photo = { 
+        ...photo, 
+        status: newStatus as 'approved' | 'rejected', 
+        rejection_reason: reason 
+      };
+
+      setPhotos(photos.map(p => p.id === photo.id ? updatedPhoto : p));
+      setModalPhotos(modalPhotos.map(p => p.id === photo.id ? updatedPhoto : p));
+      
+    } catch (err: any) {
+      alert(`Error updating status: ${err.message}`);
+    }
+  };
+
   const exportToPDF = () => {
     setIsExporting(true);
     try {
@@ -104,16 +136,11 @@ export default function Dashboard() {
         doc.setFontSize(16); doc.setTextColor(15, 23, 42); doc.text(`Execution Payout: ${brand}`, 14, 22);
         doc.setFontSize(10); doc.setTextColor(100, 116, 139); doc.text(`Generated on: ${new Date().toLocaleDateString('en-IN')}`, 14, 28);
 
-        const eligibleStores = allStores.filter(s => s.eligible_brands?.includes(brand)).sort((a, b) => a.name.localeCompare(b.name));
+        // Fallback for old database string if it still exists
+        const eligibleStores = allStores.filter(s => s.eligible_brands?.includes(brand) || (brand === 'Ariel' || brand === 'Tide' ? s.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)') : false)).sort((a, b) => a.name.localeCompare(b.name));
         
-        // Match string contents (solves multi-select comma joining)
-        const brandPhotos = photos.filter(p => {
-          if (brand === 'Ariel (End Cap) + Tide (Floor Stack)') return p.brand?.includes('Ariel') || p.brand?.includes('Tide');
-          return p.brand?.includes(brand);
-        });
-
+        const brandPhotos = photos.filter(p => p.brand?.includes(brand));
         const maxEarning = (EARNINGS_MAP[brand] || 0) * 4;
-        const isAriel = brand === 'Ariel (End Cap) + Tide (Floor Stack)';
 
         const tableData = eligibleStores.map(store => {
           const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name);
@@ -128,28 +155,12 @@ export default function Dashboard() {
             if (wPhotos.length === 0) {
               rowData.push('-'); 
             } else {
-              if (isAriel) {
-                const hasAriel = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
-                const hasTide = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Tide'));
-                
-                if (hasAriel && hasTide) {
-                  totalEarned += EARNINGS_MAP[brand];
-                  rowData.push('Approved (Both)');
-                } else if (hasAriel) {
-                  rowData.push('Missed (No Tide)');
-                } else if (hasTide) {
-                  rowData.push('Missed (No Ariel)');
-                } else {
-                  rowData.push('Rejected');
-                }
+              const hasApproved = wPhotos.some(p => p.status === 'approved');
+              if (hasApproved) {
+                totalEarned += EARNINGS_MAP[brand];
+                rowData.push('Approved');
               } else {
-                const hasApproved = wPhotos.some(p => p.status === 'approved');
-                if (hasApproved) {
-                  totalEarned += EARNINGS_MAP[brand];
-                  rowData.push('Approved');
-                } else {
-                  rowData.push('Rejected');
-                }
+                rowData.push('Rejected');
               }
             }
           });
@@ -158,13 +169,7 @@ export default function Dashboard() {
         });
 
         autoTable(doc, {
-          startY: 35,
-          head: [['Store Name', 'Week 1', 'Week 2', 'Week 3', 'Week 4', 'Total Earnings']],
-          body: tableData,
-          theme: 'grid',
-          headStyles: { fillColor: [37, 99, 235] },
-          styles: { fontSize: 9 },
-          alternateRowStyles: { fillColor: [248, 250, 252] }
+          startY: 35, head: [['Store Name', 'Week 1', 'Week 2', 'Week 3', 'Week 4', 'Total Earnings']], body: tableData, theme: 'grid', headStyles: { fillColor: [37, 99, 235] }, styles: { fontSize: 9 }, alternateRowStyles: { fillColor: [248, 250, 252] }
         });
       });
       doc.save(`Franchise_Payouts_${new Date().toISOString().split('T')[0]}.pdf`);
@@ -175,17 +180,15 @@ export default function Dashboard() {
     }
   };
 
-  // --- BRAND GRID ENGINE ---
   const renderBrandTable = () => {
-    const eligibleStores = allStores.filter(s => s.eligible_brands?.includes(activeTab)).sort((a, b) => a.name.localeCompare(b.name));
+    // Graceful fallback incase the database hasn't been updated to split the string yet
+    const eligibleStores = allStores.filter(s => 
+      s.eligible_brands?.includes(activeTab) || 
+      ((activeTab === 'Ariel' || activeTab === 'Tide') && s.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)'))
+    ).sort((a, b) => a.name.localeCompare(b.name));
 
-    const brandPhotos = photos.filter(p => {
-      if (activeTab === 'Ariel (End Cap) + Tide (Floor Stack)') return p.brand?.includes('Ariel') || p.brand?.includes('Tide');
-      return p.brand?.includes(activeTab);
-    });
-
+    const brandPhotos = photos.filter(p => p.brand?.includes(activeTab));
     const maxEarning = (EARNINGS_MAP[activeTab] || 0) * 4;
-    const isAriel = activeTab === 'Ariel (End Cap) + Tide (Floor Stack)';
 
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden overflow-x-auto">
@@ -212,13 +215,8 @@ export default function Dashboard() {
                 let totalEarned = 0;
 
                 [1, 2, 3, 4].forEach(w => {
-                  if (weeks[w].length === 0) return;
-                  if (isAriel) {
-                    const hasAriel = weeks[w].some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
-                    const hasTide = weeks[w].some(p => p.status === 'approved' && p.brand?.includes('Tide'));
-                    if (hasAriel && hasTide) totalEarned += EARNINGS_MAP[activeTab];
-                  } else {
-                    if (weeks[w].some(p => p.status === 'approved')) totalEarned += EARNINGS_MAP[activeTab];
+                  if (weeks[w].length > 0 && weeks[w].some(p => p.status === 'approved')) {
+                    totalEarned += EARNINGS_MAP[activeTab];
                   }
                 });
 
@@ -229,15 +227,7 @@ export default function Dashboard() {
                       const wPhotos = weeks[w];
                       if (wPhotos.length === 0) return <td key={w} className="p-4 text-center"><div className="w-5 h-5 mx-auto rounded-full bg-slate-50 border-2 border-slate-200"></div></td>;
                       
-                      let isSuccess = false;
-                      if (isAriel) {
-                        const hasAriel = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Ariel'));
-                        const hasTide = wPhotos.some(p => p.status === 'approved' && p.brand?.includes('Tide'));
-                        isSuccess = hasAriel && hasTide;
-                      } else {
-                        isSuccess = wPhotos.some(p => p.status === 'approved');
-                      }
-
+                      const isSuccess = wPhotos.some(p => p.status === 'approved');
                       const circleColor = isSuccess ? 'bg-green-500 shadow-sm shadow-green-200' : 'bg-red-500 shadow-sm shadow-red-200';
                       
                       return (
@@ -304,7 +294,6 @@ export default function Dashboard() {
                     <div className={`absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm z-10 ${photo.status === 'approved' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
                       {photo.status}
                     </div>
-                    {/* Multi-Brand display in modal */}
                     <div className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold bg-slate-900/80 text-white backdrop-blur-sm shadow-sm z-10">
                       {photo.brand}
                     </div>
@@ -315,10 +304,27 @@ export default function Dashboard() {
                     <div className="p-3 text-xs text-slate-500 font-medium text-center bg-white border-t border-slate-100">
                       Submitted: {new Date(photo.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })}
                     </div>
+                    
                     {photo.status === 'rejected' && photo.rejection_reason && (
                       <div className="p-3 bg-red-50 text-red-800 text-xs font-semibold border-t border-red-100 text-center">
                         <span className="font-bold uppercase tracking-wider text-red-500 mr-2">Reason:</span> 
                         {photo.rejection_reason}
+                      </div>
+                    )}
+
+                    {/* ADMIN ONLY CONTROLS */}
+                    {isAdmin && (
+                      <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                        <button 
+                          onClick={() => handleToggleStatus(photo)}
+                          className={`px-4 py-2 text-xs font-bold rounded-lg shadow-sm transition-colors ${
+                            photo.status === 'approved' 
+                              ? 'bg-red-100 text-red-700 hover:bg-red-200' 
+                              : 'bg-green-100 text-green-700 hover:bg-green-200'
+                          }`}
+                        >
+                          Change to {photo.status === 'approved' ? 'Rejected' : 'Approved'}
+                        </button>
                       </div>
                     )}
                   </div>
