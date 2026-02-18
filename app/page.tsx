@@ -1,5 +1,5 @@
 'use client';
-
+import { supabase } from '../lib/supabase';
 import { useState, useEffect } from 'react';
 import TriageCard from '../components/TriageCard';
 import Dashboard from '../components/Dashboard';
@@ -22,14 +22,48 @@ export default function Home() {
   const [dbStores, setDbStores] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // --- YOUR EXISTING DATA FUNCTIONS ---
-  const fetchPendingTasks = async () => {
-    // Your existing Supabase fetch logic for pending tasks goes here
-  };
+ // --- YOUR EXISTING DATA FUNCTIONS ---
+ const fetchPendingTasks = async () => {
+  setLoading(true);
+  try {
+    // 1. Fetch Stores
+    const { data: storesRes } = await supabase.from('stores').select('*');
+    if (storesRes) setDbStores(storesRes as any);
 
-  const handleSync = async () => {
-    // Your existing Slack sync logic goes here
-  };
+    // 2. Fetch Pending Photos
+    const { data: photosRes } = await supabase
+      .from('photos')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (photosRes) setPendingTasks(photosRes as any);
+  } catch (error: any) {
+    console.error("Fetch error:", error.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleSync = async () => {
+  setLoading(true);
+  try {
+    const res = await fetch('/api/sync', { method: 'POST' });
+    const data = await res.json();
+    
+    if (data.success) {
+      if (data.hasMore) {
+        alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
+      } else {
+        alert(`Fully Synced! Scanned ${data.scanned} messages all the way back to Feb 1st.\n\nImported ${data.count} new photos.`);
+      }
+    } else {
+      alert(`Sync Notice: ${data.error}`);
+    }
+  } catch (error: any) {
+    alert(`Network Error: ${error.message}`);
+  }
+  fetchPendingTasks();
+};
 
   useEffect(() => {
     if (isAdmin) {
@@ -133,7 +167,7 @@ export default function Home() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="name@superk.in"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className="w-full px-4 py-3 text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   required 
                 />
               </div>
@@ -144,7 +178,7 @@ export default function Home() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  className="w-full px-4 py-3 text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                   required 
                 />
               </div>
