@@ -1,5 +1,6 @@
 'use client';
 
+import Settings from '../components/Settings';
 import { useState, useEffect } from 'react';
 import TriageCard from '../components/TriageCard';
 import Dashboard from '../components/Dashboard';
@@ -10,7 +11,7 @@ const ADMIN_EMAILS = ['anuj.dalvi@superk.in'];
 const ADMIN_PASSWORD = 'superk-admin';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Triage'>('Dashboard');
+  const [activeTab, setActiveTab] = useState<'Dashboard' | 'Triage' | 'Settings'>('Dashboard');
   
   // Auth States
   const [isAdmin, setIsAdmin] = useState(false);
@@ -21,6 +22,7 @@ export default function Home() {
   // Triage States
   const [pendingTasks, setPendingTasks] = useState<any[]>([]);
   const [dbStores, setDbStores] = useState<any[]>([]);
+  const [dbBrands, setDbBrands] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   // --- DATA FETCHING & SYNC LOGIC ---
@@ -29,25 +31,20 @@ export default function Home() {
     try {
       const { data: storesRes } = await supabase.from('stores').select('*');
       if (storesRes) setDbStores(storesRes);
-
+  
+      // NEW: Fetch dynamic brands for the TriageCard dropdowns
+      const { data: brandsRes } = await supabase.from('brands').select('*');
+      if (brandsRes) setDbBrands(brandsRes);
+  
       const { data: photosRes } = await supabase
         .from('photos')
-        .select(`
-          id,
-          image_url,
-          created_at,
-          status,
-          slack_messages ( raw_text, created_at )
-        `)
+        .select(`id, image_url, created_at, status, slack_messages ( raw_text, created_at )`)
         .eq('status', 'pending')
         .order('created_at', { ascending: true });
-        
+  
       if (photosRes) setPendingTasks(photosRes);
-    } catch (error: any) {
-      console.error("Fetch error:", error.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error: any) { console.error("Fetch error:", error.message); } 
+    finally { setLoading(false); }
   };
 
   const handleSync = async () => {
@@ -119,6 +116,15 @@ export default function Home() {
           >
             ✅ Triage Queue (Admin)
           </button>
+          {/* NEW SETTINGS BUTTON (Only visible to admins) */}
+{isAdmin && (
+  <button 
+    onClick={() => setActiveTab('Settings' as any)}
+    className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'Settings' as any ? 'bg-purple-600 text-white' : 'text-slate-500 hover:bg-purple-50'}`}
+  >
+    ⚙️ Settings
+  </button>
+)}
         </div>
 
         {isAdmin && activeTab === 'Triage' && (
@@ -134,8 +140,10 @@ export default function Home() {
       {/* TAB ROUTING */}
       {activeTab === 'Dashboard' ? (
         <Dashboard isAdmin={isAdmin} />
+      ) : activeTab === 'Settings' && isAdmin ? (
+        <Settings />
       ) : (
-        
+        /* PROTECTED TRIAGE ROUTE */
         isAdmin ? (
           <div className="max-w-4xl mx-auto">
             <div className="flex justify-between items-center mb-6">
@@ -164,6 +172,7 @@ export default function Home() {
                     rawText={task.slack_messages?.raw_text || 'No text provided'}
                     time={new Date(task.created_at).toLocaleString('en-IN')}
                     dbStores={dbStores}
+                    masterBrands={dbBrands.map(b => b.name)}
                     onComplete={removeTask}
                   />
                 ))}
@@ -171,6 +180,7 @@ export default function Home() {
             )}
           </div>
         ) : (
+          /* LOGIN SCREEN */
           <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-20">
             <h2 className="text-2xl font-bold text-slate-800 mb-6 text-center">Admin Login</h2>
             <form onSubmit={handleLogin} className="space-y-4">

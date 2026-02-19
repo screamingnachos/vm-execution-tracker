@@ -16,20 +16,10 @@ interface TriageCardProps {
   rawText: string;
   time: string;
   dbStores: Store[];
+  masterBrands: string[]; // NEW: Receives dynamic brands from the database
   initialStore?: Store | null;
   onComplete: (id: string) => void;
 }
-
-// 1. SPLIT ARIEL AND TIDE INTO TWO BRANDS
-const MASTER_BRANDS = [
-  'Veeba', 
-  'Santoor', 
-  'Reckitt', 
-  'Lotus', 
-  'Surf Excel', 
-  'Ariel', 
-  'Tide'
-];
 
 const REJECTION_REASONS = [
   "Very less quantity",
@@ -46,6 +36,7 @@ export default function TriageCard({
   rawText, 
   time, 
   dbStores, 
+  masterBrands, // Destructured here
   initialStore, 
   onComplete 
 }: TriageCardProps) {
@@ -56,8 +47,6 @@ export default function TriageCard({
   
   const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
   const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
-  
-  // 2. CHANGED TO AN ARRAY FOR MULTI-SELECT
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   
   const [rejectionReason, setRejectionReason] = useState<string>('');
@@ -109,7 +98,6 @@ export default function TriageCard({
     }
   };
 
-  // 3. TOGGLE LOGIC FOR MULTI-SELECT
   const toggleBrand = (brand: string) => {
     if (selectedBrands.includes(brand)) {
       setSelectedBrands(selectedBrands.filter(b => b !== brand));
@@ -119,10 +107,7 @@ export default function TriageCard({
   };
 
   const handleFinalSave = async () => {
-    if (selectedBrands.length === 0) {
-      alert("Please select at least one brand.");
-      return;
-    }
+    if (selectedBrands.length === 0) return alert("Please select at least one brand.");
 
     let finalReason = null;
     if (pendingAction === 'rejected') {
@@ -138,7 +123,7 @@ export default function TriageCard({
         .update({ 
           status: pendingAction,
           store_id: selectedStore?.id || null,
-          brand: selectedBrands.join(', '), // Joins array into a string (e.g. "Veeba, Lotus")
+          brand: selectedBrands.join(', '), 
           rejection_reason: finalReason
         })
         .eq('id', id);
@@ -153,7 +138,6 @@ export default function TriageCard({
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col md:flex-row mb-4 transition-all hover:shadow-md">
-      
       <div className="w-full md:w-1/3 h-72 bg-slate-100 flex items-center justify-center border-b md:border-b-0 md:border-r border-slate-200 p-2">
         <img src={imageUrl} alt="Execution photo" className="w-full h-full object-contain rounded-lg" />
       </div>
@@ -213,10 +197,11 @@ export default function TriageCard({
             </div>
             
             <div className="flex flex-wrap gap-2 mb-4">
-            {MASTER_BRANDS.map(brand => {
+              {/* NOW USING DYNAMIC MASTER BRANDS */}
+              {masterBrands.map(brand => {
                 const isSelected = selectedBrands.includes(brand);
                 
-                // Graceful fallback incase the database hasn't been updated yet
+                // Fallback for older configurations in the DB
                 let isEligible = selectedStore?.eligible_brands?.includes(brand);
                 if ((brand === 'Ariel' || brand === 'Tide') && selectedStore?.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)')) {
                   isEligible = true;
