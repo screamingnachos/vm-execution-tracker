@@ -59,22 +59,34 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ startDate: syncStartDate, endDate: syncEndDate })
       });
+      
       const data = await res.json();
       
       if (data.success) {
-        if (data.hasMore) {
-          alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
-        } else {
-          alert(`Fully Synced! Scanned ${data.scanned} messages.\n\nImported ${data.count} new photos.`);
+        // This will pop up and tell us EXACTLY what the backend saw
+        alert(
+          `✅ Sync Complete!\n\n` +
+          `🔍 Messages Scanned in Slack: ${data.scanned}\n` +
+          `📥 Photos Successfully Imported: ${data.count}\n` +
+          `⏭️ Duplicates Skipped: ${data.skipped || 0}\n` +
+          `❌ Errors: ${data.errors ? data.errors.length : 0}`
+        );
+        
+        if (data.errors && data.errors.length > 0) {
+          console.error("Detailed Sync Errors:", data.errors);
+          alert(`First Error: ${data.errors[0]}`);
         }
+
+        // Refresh the queue UI
+        fetchPendingTasks();
       } else {
-        alert(`Sync Notice: ${data.error}`);
+        alert(`❌ Sync API Failed: ${data.error}`);
       }
-    } catch (error: any) {
-      alert(`Network Error: ${error.message}`);
+    } catch (err: any) {
+      alert(`Network/Server Error: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
-    // Refresh the queue after syncing!
-    await fetchPendingTasks();
   };
 
   const handleClearQueue = async () => {
