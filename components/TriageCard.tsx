@@ -41,12 +41,33 @@ export default function TriageCard({
   onComplete 
 }: TriageCardProps) {
   
+  // --- FUZZY AUTO-MAPPING ON LOAD ---
+  // We sort stores by length (longest first) so "Aparna Supermarket Nellore" matches before just "Aparna"
+  const getInitialMatch = () => {
+    if (initialStore) return initialStore;
+    if (rawText && dbStores.length > 0) {
+      const lowerText = rawText.toLowerCase();
+      const sortedStores = [...dbStores].sort((a, b) => b.name.length - a.name.length);
+      
+      for (const store of sortedStores) {
+        // Simple, clean check: does the Slack text contain the store name?
+        if (lowerText.includes(store.name.toLowerCase())) {
+          return store;
+        }
+      }
+    }
+    return null;
+  };
+
+  const matchedStore = getInitialMatch();
+
+  // State initialization
   const [step, setStep] = useState<'store-select' | 'brand-select'>('store-select');
   const [pendingAction, setPendingAction] = useState<'approved' | 'rejected'>('approved');
   const [isUpdating, setIsUpdating] = useState(false);
   
-  const [searchQuery, setSearchQuery] = useState(initialStore?.name || '');
-  const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
+  const [selectedStore, setSelectedStore] = useState<Store | null>(matchedStore);
+  const [searchQuery, setSearchQuery] = useState(matchedStore ? matchedStore.name : '');
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   
   const [rejectionReason, setRejectionReason] = useState<string>('');
@@ -63,12 +84,14 @@ export default function TriageCard({
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [dbStores, rawText, selectedStore, searchQuery]);
 
-  const filteredStores = dbStores.filter(store => 
-    store.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
+  // FORGIVING DROPDOWN SEARCH
+  const filteredStores = dbStores.filter(store => {
+    const sName = store.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const qName = searchQuery.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return sName.includes(qName);
+  });
   const handleCreateStore = async () => {
     setIsUpdating(true);
     try {

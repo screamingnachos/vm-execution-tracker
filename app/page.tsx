@@ -21,6 +21,9 @@ export default function Home() {
 
   // Triage States
   const [pendingTasks, setPendingTasks] = useState<any[]>([]);
+  // Sync Date States
+  const [syncStartDate, setSyncStartDate] = useState('');
+  const [syncEndDate, setSyncEndDate] = useState('');
   const [dbStores, setDbStores] = useState<any[]>([]);
   const [dbBrands, setDbBrands] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,7 +53,11 @@ export default function Home() {
   const handleSync = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/sync', { method: 'POST' });
+      const res = await fetch('/api/sync', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate: syncStartDate, endDate: syncEndDate })
+      });
       const data = await res.json();
       
       if (data.success) {
@@ -145,17 +152,28 @@ export default function Home() {
       ) : (
         /* PROTECTED TRIAGE ROUTE */
         isAdmin ? (
-          <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between items-center mb-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
               <h1 className="text-2xl font-bold text-slate-800">Pending Approvals</h1>
-              <button 
-                onClick={handleSync}
-                disabled={loading}
-                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
-              >
-                {loading ? 'Syncing...' : '🔄 Sync Slack History'}
-              </button>
-            </div>
+              
+              <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">From</span>
+                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="px-2 py-1 text-sm outline-none text-slate-700 bg-transparent" />
+                </div>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">To</span>
+                  <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="px-2 py-1 text-sm outline-none text-slate-700 bg-transparent" />
+                </div>
+                <button 
+                  onClick={handleSync}
+                  disabled={loading}
+                  className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-800 transition-all disabled:opacity-50 ml-2"
+                >
+                  {loading ? 'Syncing...' : '🔄 Sync'}
+                </button>
+              </div>
+            
 
             {pendingTasks.length === 0 && !loading ? (
               <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 shadow-sm">
