@@ -7,7 +7,7 @@ export async function POST(req: Request) {
     const CHANNEL_ID = process.env.SLACK_CHANNEL_ID; 
 
     if (!SLACK_BOT_TOKEN || !CHANNEL_ID) {
-      return NextResponse.json({ success: false, error: "Missing Slack environment variables." });
+      return NextResponse.json({ success: false, error: "Missing Slack environment variables in .env.local" });
     }
 
     const body = await req.json();
@@ -16,54 +16,62 @@ export async function POST(req: Request) {
     let oldest = '';
     let latest = '';
 
-    // Convert dates to strict Slack UNIX timestamps
-    if (startDate) {
-      oldest = `&oldest=${Math.floor(new Date(startDate).getTime() / 1000)}`;
-    }
-    if (endDate) {
-      // Add 86399 seconds to push it to the very end of the selected day (23:59:59)
-      latest = `&latest=${Math.floor(new Date(endDate).getTime() / 1000) + 86399}`;
-    }
+    if (startDate) oldest = `&oldest=${Math.floor(new Date(startDate).getTime() / 1000)}`;
+    if (endDate) latest = `&latest=${Math.floor(new Date(endDate).getTime() / 1000) + 86399}`;
 
     const slackUrl = `https://slack.com/api/conversations.history?channel=${CHANNEL_ID}&limit=200${oldest}${latest}`;
 
-    const slackRes = await fetch(slackUrl, {
-      headers: {
-        'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    // --- 1. TEST SLACK FETCH ---
+    let slackRes;
+    try {
+      slackRes = await fetch(slackUrl, {
+        headers: {
+          'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      });
+    } catch (slackError: any) {
+      console.error("Slack Network Error:", slackError);
+      return NextResponse.json({ success: false, error: `Slack connection failed: ${slackError.message}` });
+    }
 
     const slackData = await slackRes.json();
 
     if (!slackData.ok) {
-      return NextResponse.json({ success: false, error: slackData.error });
+      return NextResponse.json({ success: false, error: `Slack API Error: ${slackData.error}` });
     }
 
     const messages = slackData.messages || [];
     let importedCount = 0;
 
+    // --- 2. TEST SUPABASE FETCH ---
     for (const msg of messages) {
       if (msg.files && msg.files.length > 0) {
         for (const file of msg.files) {
           if (file.mimetype?.startsWith('image/')) {
             
-            const { data: existing } = await supabase
-              .from('photos')
-              .select('id')
-              .eq('image_url', file.url_private)
-              .single();
+            try {
+              const { data: existing, error: selectError } = await supabase
+                .from('photos')
+                .select('id')
+                .eq('image_url', file.url_private)
+                .single();
 
-            if (!existing) {
-              // Now saving the text DIRECTLY into the photos table
-              const { error } = await supabase.from('photos').insert([{
-                image_url: file.url_private,
-                status: 'pending',
-                created_at: new Date(parseFloat(msg.ts) * 1000).toISOString(),
-                raw_text: msg.text || "No text provided"
-              }]);
+              // Only insert if it doesn't exist
+              if (!existing) {
+                const { error: insertError } = await supabase.from('photos').insert([{
+                  image_url: file.url_private,
+                  status: 'pending',
+                  created_at: new Date(parseFloat(msg.ts) * 1000).toISOString(),
+                  raw_text: msg.text || "No text provided"
+                }]);
 
-              if (!error) importedCount++;
+                if (insertError) throw insertError;
+                importedCount++;
+              }
+            } catch (supaError: any) {
+              console.error("Supabase Database Error:", supaError);
+              return NextResponse.json({ success: false, error: `Database error: ${supaError.message}` });
             }
           }
         }
@@ -78,6 +86,7 @@ export async function POST(req: Request) {
     });
 
   } catch (error: any) {
+    console.error("General Sync Error:", error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

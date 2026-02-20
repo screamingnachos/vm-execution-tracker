@@ -77,6 +77,23 @@ export default function Home() {
     await fetchPendingTasks();
   };
 
+  const handleClearQueue = async () => {
+    if (!window.confirm("Are you sure you want to permanently delete ALL pending items in the queue?")) return;
+    
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('photos').delete().eq('status', 'pending');
+      if (error) throw error;
+      
+      setPendingTasks([]);
+      setCurrentPage(1);
+    } catch (err: any) {
+      alert(`Error clearing queue: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Removes a task from the screen immediately after you approve/reject it
   const removeTask = (taskId: string) => {
     setPendingTasks((prev) => prev.filter((task) => task.id !== taskId));
@@ -116,13 +133,13 @@ export default function Home() {
             onClick={() => setActiveTab('Dashboard')}
             className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'Dashboard' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-200'}`}
           >
-            📊 Analytics Dashboard
+            Analytics Dashboard
           </button>
           <button 
             onClick={() => setActiveTab('Triage')}
             className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'Triage' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:bg-blue-50'}`}
           >
-            ✅ Triage Queue (Admin)
+            Queue (Admin)
           </button>
           {/* NEW SETTINGS BUTTON (Only visible to admins) */}
 {isAdmin && (
@@ -177,6 +194,14 @@ export default function Home() {
                 >
                   {loading ? 'Syncing...' : '🔄 Sync'}
                 </button>
+                <button 
+                    onClick={handleClearQueue}
+                    disabled={loading || pendingTasks.length === 0}
+                    className="mt-5 bg-red-50 text-red-600 px-4 py-2.5 rounded-lg font-bold hover:bg-red-100 border border-red-100 transition-all disabled:opacity-50 shadow-sm"
+                    title="Delete all pending tasks"
+                  >
+                    🗑️ Clear
+                  </button>
               </div>
             </div>
 
