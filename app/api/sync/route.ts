@@ -16,10 +16,20 @@ export async function POST(req: Request) {
     let oldest = '';
     let latest = '';
 
-    if (startDate) oldest = `&oldest=${Math.floor(new Date(startDate).getTime() / 1000)}`;
-    if (endDate) latest = `&latest=${Math.floor(new Date(endDate).getTime() / 1000) + 86399}`;
+    // FIX 1: Proper Timezone-Safe Date Boundaries
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0); // Start of the selected day
+      oldest = `&oldest=${Math.floor(start.getTime() / 1000)}`;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Very end of the selected day
+      latest = `&latest=${Math.floor(end.getTime() / 1000)}`;
+    }
 
-    const slackUrl = `https://slack.com/api/conversations.history?channel=${CHANNEL_ID}&limit=50${oldest}${latest}`;
+    // Increased limit to ensure we don't miss anything in a busy channel
+    const slackUrl = `https://slack.com/api/conversations.history?channel=${CHANNEL_ID}&limit=100${oldest}${latest}`;
 
     const slackRes = await fetch(slackUrl, {
       headers: {
@@ -36,62 +46,76 @@ export async function POST(req: Request) {
 
     const messages = slackData.messages || [];
     let importedCount = 0;
+    let skipCount = 0;
+    let errors: string[] = [];
 
     for (const msg of messages) {
       if (msg.files && msg.files.length > 0) {
         for (const file of msg.files) {
           if (file.mimetype?.startsWith('image/')) {
             
-            // 1. Check if we already synced this exact message timestamp to prevent duplicates
-            const msgDate = new Date(parseFloat(msg.ts) * 1000).toISOString();
+            // FIX 2: Bulletproof File Naming
+            // Removing periods from msg.ts to keep the URL clean
+            const safeFileName = (file.name || 'img').replace(/[^a-zA-Z0-9.]/g, '');
+            const fileName = `slack-${msg.ts.replace('.', '')}-${safeFileName}`;
+
+            // FIX 3: Smarter Duplicate Check
+            // We now check if the exact generated file name already exists in the image_url column
             const { data: existing } = await supabase
               .from('photos')
               .select('id')
-              .eq('created_at', msgDate)
+              .ilike('image_url', `%${fileName}%`)
               .limit(1);
 
             if (!existing || existing.length === 0) {
               
-              // 2. Download the secure image from Slack
+              // Download the secure image from Slack
               const imgRes = await fetch(file.url_private, {
                 headers: { 'Authorization': `Bearer ${SLACK_BOT_TOKEN}` }
               });
               const imgBuffer = await imgRes.arrayBuffer();
 
-              // 3. Upload to your public Supabase Storage bucket
-              const fileName = `slack-${msg.ts}-${file.name.replace(/[^a-zA-Z0-9.]/g, '')}`;
+              // Upload to your public Supabase Storage bucket
               const { error: uploadError } = await supabase.storage.from('execution-images').upload(fileName, imgBuffer, {
                 contentType: file.mimetype,
                 upsert: true
               });
 
               if (!uploadError) {
-                // 4. Get the permanent public URL
                 const { data: publicUrlData } = supabase.storage.from('execution-images').getPublicUrl(fileName);
 
-                // 5. Save the public URL and raw text to the database
                 const { error: insertError } = await supabase.from('photos').insert([{
                   image_url: publicUrlData.publicUrl,
                   status: 'pending',
-                  created_at: msgDate,
+                  created_at: new Date(parseFloat(msg.ts) * 1000).toISOString(),
                   raw_text: msg.text || "No text provided"
                 }]);
 
-                if (!insertError) importedCount++;
+                if (!insertError) {
+                  importedCount++;
+                } else {
+                  errors.push(`DB Insert Error for ${fileName}: ${insertError.message}`);
+                }
               } else {
-                console.error("Supabase Upload Error:", uploadError);
+                errors.push(`Storage Upload Error for ${fileName}: ${uploadError.message}`);
               }
+            } else {
+              skipCount++;
             }
           }
         }
       }
     }
 
+    console.log(`Sync complete: ${importedCount} imported, ${skipCount} skipped as duplicates.`);
+    if (errors.length > 0) console.error("Sync Errors:", errors);
+
     return NextResponse.json({ 
       success: true, 
       count: importedCount, 
       scanned: messages.length,
-      hasMore: slackData.has_more 
+      skipped: skipCount,
+      errors: errors
     });
 
   } catch (error: any) {

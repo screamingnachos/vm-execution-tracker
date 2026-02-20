@@ -65,7 +65,7 @@ export default function Home() {
         if (data.hasMore) {
           alert(`Scanned ${data.scanned} messages and imported ${data.count} new photos.\n\nThere are still older messages to scan! Please click "Sync History" again to continue fetching.`);
         } else {
-          alert(`Fully Synced! Scanned ${data.scanned} messages all the way back to Feb 1st.\n\nImported ${data.count} new photos.`);
+          alert(`Fully Synced! Scanned ${data.scanned} messages.\n\nImported ${data.count} new photos.`);
         }
       } else {
         alert(`Sync Notice: ${data.error}`);
