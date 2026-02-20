@@ -43,15 +43,23 @@ export default function TriageCard({
   
   // --- FUZZY AUTO-MAPPING ON LOAD ---
   // We sort stores by length (longest first) so "Aparna Supermarket Nellore" matches before just "Aparna"
+  // --- FUZZY AUTO-MAPPING ON LOAD ---
   const getInitialMatch = () => {
     if (initialStore) return initialStore;
     if (rawText && dbStores.length > 0) {
-      const lowerText = rawText.toLowerCase();
+      
+      // Strip everything except lowercase letters and numbers from Slack text
+      const cleanText = rawText.toLowerCase().replace(/[^a-z0-9]/g, '');
+      
+      // Sort stores by length (longest first) to prevent partial matches
       const sortedStores = [...dbStores].sort((a, b) => b.name.length - a.name.length);
       
       for (const store of sortedStores) {
-        // Simple, clean check: does the Slack text contain the store name?
-        if (lowerText.includes(store.name.toLowerCase())) {
+        // Strip everything from the store name too
+        const cleanStoreName = store.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        
+        // If the clean store name exists anywhere inside the clean slack text
+        if (cleanStoreName && cleanText.includes(cleanStoreName)) {
           return store;
         }
       }

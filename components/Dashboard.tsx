@@ -35,10 +35,8 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
   const [isExporting, setIsExporting] = useState(false);
   const [activeTab, setActiveTab] = useState('General');
   
-  // --- NEW: DATE FILTER STATE ---
-  // Defaults to current year and month
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth()); // 0 = Jan, 1 = Feb...
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth()); 
 
   const [earningsMap, setEarningsMap] = useState<Record<string, number>>({});
   const [dynamicTabs, setDynamicTabs] = useState<string[]>(['General']);
@@ -57,7 +55,7 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
 
   useEffect(() => {
     fetchData();
-  }, [selectedMonth, selectedYear]); // Re-fetch whenever date changes
+  }, [selectedMonth, selectedYear]); 
 
   async function fetchData() {
     setLoading(true);
@@ -73,7 +71,6 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
         setDynamicTabs(['General', ...brandsData.map(b => b.name)]);
       }
 
-      // --- NEW: DATE RANGE FILTER ---
       const startDate = new Date(selectedYear, selectedMonth, 1).toISOString();
       const endDate = new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59).toISOString();
 
@@ -82,8 +79,8 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
         .select(`id, brand, created_at, status, image_url, rejection_reason, stores ( name )`)
         .in('status', ['approved', 'rejected'])
         .not('brand', 'is', null)
-        .gte('created_at', startDate) // Filter start of month
-        .lte('created_at', endDate)   // Filter end of month
+        .gte('created_at', startDate) 
+        .lte('created_at', endDate)   
         .order('created_at', { ascending: false });
 
       if (photosData) setPhotos(photosData as unknown as Photo[]);
@@ -145,7 +142,6 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
 
       const { data: publicUrlData } = supabase.storage.from('execution-images').getPublicUrl(fileName);
 
-      // IMPORTANT: Use the SELECTED month/year for the manual upload date!
       let fakeDay = 1;
       if (modalWeek === 1) fakeDay = 4;
       else if (modalWeek === 2) fakeDay = 11;
@@ -181,7 +177,6 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
     }
   };
 
-  // --- CSV EXPORT ENGINE ---
   const exportToCSV = () => {
     const brandsToExport = dynamicTabs.filter(t => t !== 'General');
     let csvContent = "Store Name,Brand,Week 1,Week 2,Week 3,Week 4,Total Earnings,Max Potential,Payout Status\n";
@@ -212,14 +207,12 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
           }
         });
 
-        // Add row to CSV
         const payoutStatus = totalEarned === maxEarning ? "Full Payout" : totalEarned > 0 ? "Partial Payout" : "No Payout";
         const row = `"${store.name}","${brand}",${weekStatuses.join(',')},${totalEarned},${maxEarning},${payoutStatus}`;
         csvContent += row + "\n";
       });
     });
 
-    // Trigger Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
@@ -357,12 +350,97 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
   const renderGeneralTab = () => {
     const approvedCount = photos.filter(p => p.status === 'approved').length;
     const rejectedCount = photos.filter(p => p.status === 'rejected').length;
+    
+    // Grab all active contest brands
+    const brandList = dynamicTabs.filter(t => t !== 'General');
 
     return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Approved</h3><p className="text-4xl font-extrabold text-green-600">{approvedCount}</p></div>
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Rejected</h3><p className="text-4xl font-extrabold text-red-500">{rejectedCount}</p></div>
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-2xl shadow-sm text-white flex flex-col justify-center"><h3 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Processed Executions</h3><p className="text-4xl font-extrabold">{photos.length}</p></div>
+      <div className="space-y-8">
+        {/* KPI CARDS */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Approved</h3><p className="text-4xl font-extrabold text-green-600">{approvedCount}</p></div>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Total Rejected</h3><p className="text-4xl font-extrabold text-red-500">{rejectedCount}</p></div>
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-2xl shadow-sm text-white flex flex-col justify-center"><h3 className="text-sm font-bold opacity-70 uppercase tracking-wider mb-2">Processed Executions</h3><p className="text-4xl font-extrabold">{photos.length}</p></div>
+        </div>
+
+        {/* NEW: BRAND ANALYTICS TABLES */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {brandList.map(brand => {
+            // Find stores assigned to this contest
+            const eligibleStores = allStores.filter(s => 
+              s.eligible_brands?.includes(brand) || ((brand === 'Ariel' || brand === 'Tide') && s.eligible_brands?.includes('Ariel (End Cap) + Tide (Floor Stack)'))
+            );
+            
+            const totalStores = eligibleStores.length;
+            if (totalStores === 0) return null; // Skip rendering if no stores are mapped
+
+            const brandPhotos = photos.filter(p => p.brand?.includes(brand));
+            
+            // Calculate stats for Week 1-4
+            const weekStats = [1, 2, 3, 4].map(w => {
+              let submitted = 0;
+              let approved = 0;
+              let rejected = 0;
+
+              eligibleStores.forEach(store => {
+                const storePhotos = brandPhotos.filter(p => p.stores?.name === store.name && getWeekNumber(p.created_at) === w);
+                if (storePhotos.length > 0) {
+                  submitted++;
+                  const hasApproved = storePhotos.some(p => p.status === 'approved');
+                  if (hasApproved) {
+                    approved++;
+                  } else {
+                    rejected++; // Store submitted photos, but 100% of them were rejected
+                  }
+                }
+              });
+
+              return {
+                week: w,
+                subPct: Math.round((submitted / totalStores) * 100),
+                appPct: Math.round((approved / totalStores) * 100),
+                rejPct: Math.round((rejected / totalStores) * 100)
+              };
+            });
+
+            return (
+              <div key={brand} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                  <h4 className="font-bold text-slate-800">{brand}</h4>
+                  <span className="text-xs font-semibold text-slate-500 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">
+                    {totalStores} Stores
+                  </span>
+                </div>
+                
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-white text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-100">
+                    <tr>
+                      <th className="px-5 py-3 font-bold">Metric</th>
+                      <th className="px-5 py-3 font-bold text-center">W1</th>
+                      <th className="px-5 py-3 font-bold text-center">W2</th>
+                      <th className="px-5 py-3 font-bold text-center">W3</th>
+                      <th className="px-5 py-3 font-bold text-center">W4</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    <tr className="hover:bg-slate-50 transition-colors">
+                      <td className="px-5 py-3 font-medium text-slate-600">Submission Rate</td>
+                      {weekStats.map(d => <td key={d.week} className="px-5 py-3 text-center text-slate-600 font-medium">{d.subPct}%</td>)}
+                    </tr>
+                    <tr className="hover:bg-slate-50 transition-colors">
+                      <td className="px-5 py-3 font-bold text-green-700">Approval Rate</td>
+                      {weekStats.map(d => <td key={d.week} className="px-5 py-3 text-center text-green-600 font-bold">{d.appPct}%</td>)}
+                    </tr>
+                    <tr className="hover:bg-slate-50 transition-colors">
+                      <td className="px-5 py-3 font-bold text-red-700">Rejection Rate</td>
+                      {weekStats.map(d => <td key={d.week} className="px-5 py-3 text-center text-red-500 font-bold">{d.rejPct}%</td>)}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
