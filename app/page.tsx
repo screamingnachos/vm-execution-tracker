@@ -21,9 +21,10 @@ export default function Home() {
 
   // Triage States
   const [pendingTasks, setPendingTasks] = useState<any[]>([]);
-  // Sync Date States
-  const [syncStartDate, setSyncStartDate] = useState('');
-  const [syncEndDate, setSyncEndDate] = useState('');
+ // Sync Date & Pagination States
+ const [syncStartDate, setSyncStartDate] = useState('');
+ const [syncEndDate, setSyncEndDate] = useState('');
+ const [currentPage, setCurrentPage] = useState(1); // <-- ADD THIS
   const [dbStores, setDbStores] = useState<any[]>([]);
   const [dbBrands, setDbBrands] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -41,7 +42,7 @@ export default function Home() {
   
       const { data: photosRes } = await supabase
         .from('photos')
-        .select(`id, image_url, created_at, status, slack_messages ( raw_text, created_at )`)
+        .select(`id, image_url, created_at, status, raw_text`) // <-- UPDATE THIS LINE
         .eq('status', 'pending')
         .order('created_at', { ascending: true });
   
@@ -152,48 +153,79 @@ export default function Home() {
       ) : (
         /* PROTECTED TRIAGE ROUTE */
         isAdmin ? (
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-              <h1 className="text-2xl font-bold text-slate-800">Pending Approvals</h1>
+          <div className="max-w-4xl mx-auto w-full">
+            
+            {/* HEADER & FILTERS (Forced to stack on top) */}
+            <div className="flex flex-col mb-8 w-full border-b border-slate-200 pb-6">
+              <h1 className="text-2xl font-bold text-slate-800 mb-4">Pending Approvals</h1>
               
-              <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">From</span>
-                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="px-2 py-1 text-sm outline-none text-slate-700 bg-transparent" />
+              <div className="flex flex-wrap items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm w-full">
+                <div className="flex flex-col flex-1 min-w-[150px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">Start Date</span>
+                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 bg-slate-50" />
                 </div>
-                <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">To</span>
-                  <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="px-2 py-1 text-sm outline-none text-slate-700 bg-transparent" />
+                
+                <div className="flex flex-col flex-1 min-w-[150px]">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">End Date</span>
+                  <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 bg-slate-50" />
                 </div>
+                
                 <button 
                   onClick={handleSync}
                   disabled={loading}
-                  className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-800 transition-all disabled:opacity-50 ml-2"
+                  className="mt-5 bg-slate-900 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-slate-800 transition-all disabled:opacity-50 whitespace-nowrap shadow-sm"
                 >
                   {loading ? 'Syncing...' : '🔄 Sync'}
                 </button>
               </div>
-            
+            </div>
 
+            {/* QUEUE & PAGINATION */}
             {pendingTasks.length === 0 && !loading ? (
-              <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 shadow-sm">
+              <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 shadow-sm w-full">
                 <span className="text-4xl">🎉</span>
                 <p className="text-slate-500 font-medium mt-4">All caught up! Queue is empty.</p>
               </div>
             ) : (
-              <div>
-                {pendingTasks.map((task) => (
+              <div className="w-full">
+                {/* Render only the tasks for the current page */}
+                {pendingTasks.slice((currentPage - 1) * 10, currentPage * 10).map((task) => (
                   <TriageCard 
                     key={task.id}
                     id={task.id}
                     imageUrl={task.image_url}
-                    rawText={task.slack_messages?.raw_text || 'No text provided'}
+                    rawText={task.raw_text || 'No text provided'} // Reading directly from the new column!
                     time={new Date(task.created_at).toLocaleString('en-IN')}
                     dbStores={dbStores}
                     masterBrands={dbBrands.map(b => b.name)}
                     onComplete={removeTask}
                   />
                 ))}
+
+                {/* PAGINATION CONTROLS */}
+                {pendingTasks.length > 10 && (
+                  <div className="flex justify-between items-center mt-8 p-4 bg-white rounded-xl shadow-sm border border-slate-200">
+                    <button 
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                      disabled={currentPage === 1}
+                      className="px-4 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <span className="text-sm font-bold text-slate-500">
+                      Page {currentPage} of {Math.ceil(pendingTasks.length / 10)}
+                    </span>
+                    
+                    <button 
+                      onClick={() => setCurrentPage(p => Math.min(Math.ceil(pendingTasks.length / 10), p + 1))} 
+                      disabled={currentPage === Math.ceil(pendingTasks.length / 10)}
+                      className="px-4 py-2 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                    >
+                      Next →
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

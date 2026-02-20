@@ -1,117 +1,83 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '../../../lib/supabase';
 
-export const dynamic = 'force-dynamic';
-
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const channelId = (process.env.SLACK_CHANNEL_ID || '').trim();
-    const botToken = (process.env.SLACK_BOT_TOKEN || '').trim();
+    const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
+    const CHANNEL_ID = process.env.SLACK_CHANNEL_ID; 
 
-    if (!channelId || !botToken) return NextResponse.json({ error: 'Missing Keys.' });
+    if (!SLACK_BOT_TOKEN || !CHANNEL_ID) {
+      return NextResponse.json({ success: false, error: "Missing Slack environment variables." });
+    }
 
-    const stopDateTs = (new Date('2026-02-01T00:00:00').getTime() / 1000).toString();
-    
-    let addedCount = 0;
-    let scannedCount = 0;
-    let hasMore = true;
-    let cursor = '';
-    let loops = 0;
+    const body = await req.json();
+    const { startDate, endDate } = body;
 
-    while (hasMore && loops < 5) {
-      loops++;
-      
-      const slackUrl = new URL('https://slack.com/api/conversations.history');
-      slackUrl.searchParams.append('channel', channelId);
-      slackUrl.searchParams.append('limit', '100');
-      slackUrl.searchParams.append('oldest', stopDateTs);
-      
-      if (cursor) slackUrl.searchParams.append('cursor', cursor);
+    let oldest = '';
+    let latest = '';
 
-      const slackRes = await fetch(slackUrl.toString(), {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${botToken}` },
-        cache: 'no-store'
-      });
+    // Convert dates to strict Slack UNIX timestamps
+    if (startDate) {
+      oldest = `&oldest=${Math.floor(new Date(startDate).getTime() / 1000)}`;
+    }
+    if (endDate) {
+      // Add 86399 seconds to push it to the very end of the selected day (23:59:59)
+      latest = `&latest=${Math.floor(new Date(endDate).getTime() / 1000) + 86399}`;
+    }
 
-      const slackData = await slackRes.json();
-      if (!slackData.ok) return NextResponse.json({ error: `Slack Error: ${slackData.error}` });
-      if (!slackData.messages || slackData.messages.length === 0) break;
+    const slackUrl = `https://slack.com/api/conversations.history?channel=${CHANNEL_ID}&limit=200${oldest}${latest}`;
 
-      scannedCount += slackData.messages.length;
+    const slackRes = await fetch(slackUrl, {
+      headers: {
+        'Authorization': `Bearer ${SLACK_BOT_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-      for (const msg of slackData.messages) {
-        const messageDate = new Date(parseFloat(msg.ts) * 1000).toISOString();
+    const slackData = await slackRes.json();
 
-        const { data: existingMsg } = await supabase.from('slack_messages').select('id').eq('slack_ts', msg.ts).single();
-        
-        let msgId;
-        if (existingMsg) {
-          msgId = existingMsg.id;
-        } else {
-          const { data: msgData, error } = await supabase
-            .from('slack_messages')
-            .insert([{ slack_ts: msg.ts, raw_text: msg.text || '', created_at: messageDate }])
-            .select('id').single();
-          if (!error && msgData) msgId = msgData.id;
-        }
+    if (!slackData.ok) {
+      return NextResponse.json({ success: false, error: slackData.error });
+    }
 
-        if (!msg.files || !msgId) continue;
+    const messages = slackData.messages || [];
+    let importedCount = 0;
 
+    for (const msg of messages) {
+      if (msg.files && msg.files.length > 0) {
         for (const file of msg.files) {
-          if (!file.mimetype?.startsWith('image/') || !file.url_private_download) continue;
-
-          const fileName = `${msg.ts}-${file.name}`;
-
-          const { data: existingPhoto } = await supabase
-            .from('photos')
-            .select('id')
-            .like('image_url', `%${fileName}%`)
-            .single();
+          if (file.mimetype?.startsWith('image/')) {
             
-          if (existingPhoto) continue;
+            const { data: existing } = await supabase
+              .from('photos')
+              .select('id')
+              .eq('image_url', file.url_private)
+              .single();
 
-          try {
-            const fileRes = await fetch(file.url_private_download, {
-              headers: { Authorization: `Bearer ${botToken}` },
-              cache: 'no-store'
-            });
-            
-            if (!fileRes.ok) continue;
+            if (!existing) {
+              // Now saving the text DIRECTLY into the photos table
+              const { error } = await supabase.from('photos').insert([{
+                image_url: file.url_private,
+                status: 'pending',
+                created_at: new Date(parseFloat(msg.ts) * 1000).toISOString(),
+                raw_text: msg.text || "No text provided"
+              }]);
 
-            const arrayBuffer = await fileRes.arrayBuffer();
-
-            await supabase.storage.from('execution-images').upload(fileName, arrayBuffer, { contentType: file.mimetype, upsert: true });
-            const { data: publicUrlData } = supabase.storage.from('execution-images').getPublicUrl(fileName);
-
-            await supabase.from('photos').insert([{
-              message_id: msgId,
-              image_url: publicUrlData.publicUrl,
-              status: 'pending',
-              created_at: messageDate 
-            }]);
-            
-            addedCount++;
-          } catch (e) {
-            console.error("File processing failed:", e);
+              if (!error) importedCount++;
+            }
           }
         }
-      }
-
-      if (slackData.response_metadata?.next_cursor) {
-        cursor = slackData.response_metadata.next_cursor;
-      } else {
-        hasMore = false;
       }
     }
 
     return NextResponse.json({ 
       success: true, 
-      count: addedCount, 
-      scanned: scannedCount,
-      hasMore 
+      count: importedCount, 
+      scanned: messages.length,
+      hasMore: slackData.has_more 
     });
+
   } catch (error: any) {
-    return NextResponse.json({ error: `Server Crash: ${error.message}` }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
