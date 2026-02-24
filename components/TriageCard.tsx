@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 'use client';
-
+import React from 'react';
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
@@ -41,34 +41,6 @@ export default function TriageCard({
   onComplete 
 }: TriageCardProps) {
   
-  // --- FUZZY AUTO-MAPPING ON LOAD ---
-  // We sort stores by length (longest first) so "Aparna Supermarket Nellore" matches before just "Aparna"
-  // --- FUZZY AUTO-MAPPING ON LOAD ---
-  const getInitialMatch = () => {
-    if (initialStore) return initialStore;
-    if (rawText && dbStores.length > 0) {
-      
-      // Strip everything except lowercase letters and numbers from Slack text
-      const cleanText = rawText.toLowerCase().replace(/[^a-z0-9]/g, '');
-      
-      // Sort stores by length (longest first) to prevent partial matches
-      const sortedStores = [...dbStores].sort((a, b) => b.name.length - a.name.length);
-      
-      for (const store of sortedStores) {
-        // Strip everything from the store name too
-        const cleanStoreName = store.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        
-        // If the clean store name exists anywhere inside the clean slack text
-        if (cleanStoreName && cleanText.includes(cleanStoreName)) {
-          return store;
-        }
-      }
-    }
-    return null;
-  };
-
-  const matchedStore = getInitialMatch();
-
   // State initialization
   const [step, setStep] = useState<'store-select' | 'brand-select'>('store-select');
   const [pendingAction, setPendingAction] = useState<'approved' | 'rejected'>('approved');
@@ -83,6 +55,9 @@ export default function TriageCard({
   
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // --- REACTIVE FUZZY AUTO-MAPPING ---
+  // This waits for dbStores to fully load before trying to match
   useEffect(() => {
     if (!selectedStore && searchQuery === '' && rawText && dbStores.length > 0) {
       const cleanText = rawText.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -98,7 +73,6 @@ export default function TriageCard({
       }
     }
   }, [dbStores, rawText, selectedStore, searchQuery]);
-
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -107,7 +81,7 @@ export default function TriageCard({
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [dbStores, rawText, selectedStore, searchQuery]);
+  }, []);
 
   // FORGIVING DROPDOWN SEARCH
   const filteredStores = dbStores.filter(store => {
@@ -155,7 +129,7 @@ export default function TriageCard({
   const handleFinalSave = async () => {
     if (selectedBrands.length === 0) return alert("Please select at least one brand.");
 
-    let finalReason = null;
+    let finalReason: string | null = null;
     if (pendingAction === 'rejected') {
       if (!rejectionReason) return alert("Please select a reason for rejection.");
       if (rejectionReason === "Other (Type custom reason)" && !customReason.trim()) return alert("Please type out your custom rejection reason.");
