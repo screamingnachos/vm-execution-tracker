@@ -74,8 +74,8 @@ export default function TriageCard({
   const [pendingAction, setPendingAction] = useState<'approved' | 'rejected'>('approved');
   const [isUpdating, setIsUpdating] = useState(false);
   
-  const [selectedStore, setSelectedStore] = useState<Store | null>(matchedStore);
-  const [searchQuery, setSearchQuery] = useState(matchedStore ? matchedStore.name : '');
+  const [selectedStore, setSelectedStore] = useState<Store | null>(initialStore || null);
+  const [searchQuery, setSearchQuery] = useState(initialStore ? initialStore.name : '');
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   
   const [rejectionReason, setRejectionReason] = useState<string>('');
@@ -83,6 +83,21 @@ export default function TriageCard({
   
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedStore && searchQuery === '' && rawText && dbStores.length > 0) {
+      const cleanText = rawText.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const sortedStores = [...dbStores].sort((a, b) => b.name.length - a.name.length);
+      
+      for (const store of sortedStores) {
+        const cleanStoreName = store.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (cleanStoreName && cleanText.includes(cleanStoreName)) {
+          setSelectedStore(store);
+          setSearchQuery(store.name);
+          break;
+        }
+      }
+    }
+  }, [dbStores, rawText, selectedStore, searchQuery]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
